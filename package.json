@@ -14,7 +14,10 @@
   "scripts": {
     "postversion": "git push"
   },
-  "repository": "",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/jacobtruman/tru-pokemongo.git"
+  },
   "author": "Jacob Truman",
   "license": "BSD"
 }
