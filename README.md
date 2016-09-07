@@ -1,10 +1,10 @@
 # Pokemon GO bot for Node.js
-[![npm version](https://img.shields.io/npm/v/pokemongo.svg)](https://npmjs.com/package/pokemongo)
-[![npm downloads](https://img.shields.io/npm/dm/pokemongo.svg)](https://npmjs.com/package/pokemongo)
-[![dependencies](https://img.shields.io/david/jacobtruman/pokemongo.svg)](https://david-dm.org/jacobtruman/pokemongo)
+[![npm version](https://img.shields.io/npm/v/tru-pokemongo.svg)](https://npmjs.com/package/tru-pokemongo)
+[![npm downloads](https://img.shields.io/npm/dm/tru-pokemongo.svg)](https://npmjs.com/package/tru-pokemongo)
+[![dependencies](https://img.shields.io/david/jacobtruman/tru-pokemongo.svg)](https://david-dm.org/jacobtruman/tru-pokemongo)
 
-Install it from [npm](https://www.npmjs.com/package/pokemongo) or check out the [wiki](https://github.com/jacobtruman/pokemongo/wiki) for documentation.
+Install it from [npm](https://www.npmjs.com/package/tru-pokemongo) or check out the [wiki](https://github.com/jacobtruman/tru-pokemongo/wiki) for documentation.
 
 # Support
 
-Report bugs on the [issue tracker](https://github.com/jacobtruman/pokemongo/issues).
+Report bugs on the [issue tracker](https://github.com/jacobtruman/tru-pokemongo/issues).
