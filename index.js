@@ -369,9 +369,11 @@ function catchPokemon(pokemon_list, callback) {
 								myLog.chat('Encountered pokemon ' + pokedexInfo.name + '...');
 								getBallToUse(counts, function(pokeball_id) {
 									if(pokeball_id != null) {
+										// pokemon, normalizedHitPosition, normalizedReticleSize, spinModifier, pokeball
+										// TODO: need to add some variation to this
 										pokeAPI.CatchPokemon(pokemon, 1, 1.950, 1, pokeball_id, function(xerr, xdat) {
-											if(xerr != undefined && xerr != "No result") {
-												myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xerr + ")");
+											if(xerr !== undefined && xerr != "No result") {
+												myLog.warning("Unable to catch " + pokedexInfo.name + "; ERROR: " + xerr);
 												setTimeout(function() {
 													catchPokemon(pokemon_list, callback);
 												}, call_wait);
@@ -393,13 +395,13 @@ function catchPokemon(pokemon_list, callback) {
 															}, call_wait);
 														}
 													} else {
-														myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xdat + ")");
+														myLog.warning("Unable to catch " + pokedexInfo.name + "; status not accounted for (" + xdat + ")");
 														setTimeout(function() {
 															catchPokemon(pokemon_list, callback);
 														}, call_wait);
 													}
 												} else {
-													myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xdat + ")");
+													myLog.warning("Unable to catch " + pokedexInfo.name + "; status not defined (" + xdat + ")");
 													setTimeout(function() {
 														catchPokemon(pokemon_list, callback);
 													}, call_wait);
@@ -584,7 +586,7 @@ function showPokemon(options, callback) {
 				options.total++;
 				var pokemon = options.pokemon_list.pop();
 				var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
-				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + formatString("SCORE: " + score + " / " + perfect_score, 18);
+				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + "SCORE: " + formatString(score, 3) + "/" + formatString(perfect_score, 5);
 				if(score == perfect_score) {
 					myLog.success("############### PERFECT ###################");
 					myLog.success(info_str);
