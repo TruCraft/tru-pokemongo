@@ -158,6 +158,8 @@ var break_loop = false;
 var restart_wait_min = 10;
 var restart_wait = (1000 * 60) * restart_wait_min;
 
+var perfect_score = (15 + 15 + 15);
+
 main();
 
 /**
@@ -368,7 +370,7 @@ function catchPokemon(pokemon_list, callback) {
 								getBallToUse(counts, function(pokeball_id) {
 									if(pokeball_id != null) {
 										pokeAPI.CatchPokemon(pokemon, 1, 1.950, 1, pokeball_id, function(xerr, xdat) {
-											if(xerr) {
+											if(xerr != "No result") {
 												myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xerr + ")");
 												setTimeout(function() {
 													catchPokemon(pokemon_list, callback);
@@ -410,6 +412,7 @@ function catchPokemon(pokemon_list, callback) {
 								});
 							} else {
 								myLog.warning('Invalid value in WildPokemon when trying to encounter pokemon' + pokedexInfo.name + " (might be out of room...)");
+								console.log(dat);
 								setTimeout(function() {
 									catchPokemon(pokemon_list, callback);
 								}, call_wait);
@@ -580,8 +583,9 @@ function showPokemon(options, callback) {
 			if(options.pokemon_list.length > 0) {
 				options.total++;
 				var pokemon = options.pokemon_list.pop();
-				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina);
-				if(pokemon.individual_attack == 15 && pokemon.individual_defense == 15 && pokemon.individual_stamina == 15) {
+				var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
+				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + formatString("SCORE: " + score + " / " + perfect_score, 18);
+				if(score == perfect_score) {
 					myLog.success("############### PERFECT ###################");
 					myLog.success(info_str);
 				} else if(pokemon.favorite) {
@@ -643,7 +647,7 @@ function getPokemonToScrap(options, callback) {
 		var pokemon_id = parseInt(pokemon.pokemon_id);
 		var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
 
-		if(score == (15 + 15 + 15)) {
+		if(score == perfect_score) {
 			//console.log("WON'T SCRAP - PERFECT");
 		} else if(pokemon.favorite) {
 			//console.log("WON'T SCRAP - FAVORITE");
