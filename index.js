@@ -370,7 +370,7 @@ function catchPokemon(pokemon_list, callback) {
 								getBallToUse(counts, function(pokeball_id) {
 									if(pokeball_id != null) {
 										pokeAPI.CatchPokemon(pokemon, 1, 1.950, 1, pokeball_id, function(xerr, xdat) {
-											if(xerr != "No result") {
+											if(xerr != undefined && xerr != "No result") {
 												myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xerr + ")");
 												setTimeout(function() {
 													catchPokemon(pokemon_list, callback);
