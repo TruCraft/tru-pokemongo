@@ -8,3 +8,7 @@ Install it from [npm](https://www.npmjs.com/package/tru-pokemongo) or check out 
 # Support
 
 Report bugs on the [issue tracker](https://github.com/jacobtruman/tru-pokemongo/issues).
+
+# Disclaimer
+
+Use at your own risk - you might be banned for using this.

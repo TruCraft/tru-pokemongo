@@ -23,15 +23,26 @@ const optionDefinitions = [
 				name: 'catch',
 				alias: 'c',
 				type: Boolean,
-				description: 'Try to catch Pokemon'
+				description: 'Try to catch Pokemon; must be used with the loop (-l) flag'
 			}, {
 				name: 'scrap',
 				alias: 's',
 				type: Boolean,
 				description: 'Scrap duplicate Pokemon (must have the "allow_scrap" parameter in the user config file)'
 			}, {
+				name: 'inventory',
+				alias: 'i',
+				type: Boolean,
+				description: 'Show inventory'
+			}, {
+				name: 'pokemon',
+				alias: 'p',
+				type: Boolean,
+				description: 'Show Pokemon'
+			}, {
 				name: 'username',
-				alias: 'u', type: String,
+				alias: 'u',
+				type: String,
 				defaultOption: true,
 				typeLabel: '[underline]{username}',
 				description: 'User account to idle (matches against a filename in the ./configs/ directory)'
@@ -49,16 +60,22 @@ function showUsage(msg) {
 	process.exit();
 }
 
-var flags = commandLineArgs(optionDefinitions.optionList);
+var flags = commandLineArgs(optionDefinitions[1].optionList);
 
 var doLoop = flags.loop || false;
 var doCatch = flags.catch || false;
 var doScrap = flags.scrap || false;
+var doShowInventory = flags.inventory || false;
+var doShowPokemon = flags.pokemon || false;
 
 var username = flags.username;
 
 if(username == null) {
 	showUsage("You must provide a username (-u)");
+}
+
+if(doCatch && !doLoop) {
+	showUsage("The catch (-c) flag must be used with the loop flag (-l)");
 }
 
 var fs = require('fs');
@@ -69,9 +86,16 @@ var PokemonGO = require('pokemon-go-node-api');
 // using var so you can login with multiple users
 var pokeAPI = new PokemonGO.Pokeio();
 
+var pokemon_name_max_len = 0;
+
+for(var i in pokeAPI.pokemonlist) {
+	if(pokeAPI.pokemonlist[i].name.length > pokemon_name_max_len) {
+		pokemon_name_max_len = pokeAPI.pokemonlist[i].name.length;
+	}
+}
+
 // config files
 var configsDir = __dirname + "/configs";
-//var configFile = configsDir + "/config.json";
 var accountConfigFile = configsDir + "/" + username + ".json";
 
 var account_config = [];
@@ -91,6 +115,9 @@ if(fs.existsSync(accountConfigFile)) {
 var logDir = __dirname + "/logs/";
 mkdirp(logDir, function(err) {
 	// path was created unless there was error
+	if(err) {
+		throw "Unable to create log dir: " + logDir;
+	}
 });
 
 // initialize log
@@ -131,17 +158,20 @@ var break_loop = false;
 var restart_wait_min = 10;
 var restart_wait = (1000 * 60) * restart_wait_min;
 
-startProcess();
+main();
 
-function startProcess() {
+/**
+ * Main process
+ */
+function main() {
 	pokeAPI.init(username, password, location, provider, function(err) {
 		if(err) {
-			myLog.error("From startProcess:");
+			myLog.error("From main:");
 			myLog.error(err);
 			myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
 			// wait between tries
 			setTimeout(function() {
-				startProcess();
+				main();
 			}, retry_wait);
 			return;
 		}
@@ -151,12 +181,12 @@ function startProcess() {
 
 		pokeAPI.GetProfile(function(err, profile) {
 			if(err) {
-				myLog.error("From startProcess->pokeAPI.GetProfile:");
+				myLog.error("From main->pokeAPI.GetProfile:");
 				myLog.error(err);
 				myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
 				// wait between tries
 				setTimeout(function() {
-					startProcess();
+					main();
 				}, retry_wait);
 				return;
 			}
@@ -175,29 +205,35 @@ function startProcess() {
 			myLog.info('Pokecoin: ' + poke);
 			myLog.info('Stardust: ' + profile.currency[1].amount);
 
-			showInventory(retry_wait, function() {
-				showPokemon(retry_wait, function() {
-					if(doLoop) {
-						// wait to start
-						setTimeout(function() {
-							runLoop(function() {
-								if(break_loop) {
-									// start back up if the process exited
-									break_loop = false;
-									pokeAPI = new PokemonGO.Pokeio();
-									myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
-									setTimeout(startProcess(), restart_wait);
-									//throw "######### Something is wrong - stopping #########";
-								}
-							});
-						}, call_wait);
-					}
+			showInventory({wait: retry_wait, show: doShowInventory}, function() {
+				showPokemon({wait: retry_wait, show: doShowPokemon}, function() {
+					scrapPokemon({wait: retry_wait, scrap: doScrap}, function() {
+						if(doLoop) {
+							// wait to start
+							setTimeout(function() {
+								runLoop(function() {
+									if(break_loop) {
+										// start back up if the process exited
+										break_loop = false;
+										pokeAPI = new PokemonGO.Pokeio();
+										myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
+										setTimeout(main(), restart_wait);
+									}
+								});
+							}, call_wait);
+						}
+					});
 				});
 			});
 		});
 	});
 }
 
+/**
+ * Run the loop to go to provided GPS coordinates
+ *
+ * @param callback
+ */
 function runLoop(callback) {
 	if(!break_loop) {
 		runLocationChecks(call_wait);
@@ -211,15 +247,17 @@ function runLoop(callback) {
 	}
 }
 
+/**
+ * Check locations for things nearby (Pokemon and Poke Stops)
+ *
+ * @param wait
+ */
 function runLocationChecks(wait) {
 	setTimeout(function() {
 		pokeAPI.Heartbeat(function(err, hb) {
 			if(err) {
 				myLog.error("From runLocationChecks->pokeAPI.Heartbeat:");
 				myLog.error(err);
-				//myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
-				// wait between tries
-				//runLocationChecks(retry_wait);
 				break_loop = true;
 				return;
 			} else {
@@ -263,9 +301,10 @@ function runLocationChecks(wait) {
 							myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
 							catchPokemon(pokemon_to_catch, function() {
 								checkForts(forts, function(items) {
-									showItems(items, items.length, function(ret) {
-										if(ret != null && ret > 0) {
-											showInventory(call_wait, function() {
+									var total = items.length;
+									showItemsAcquired(items, function() {
+										if(total != null && total > 0) {
+											showInventory({wait: call_wait, show: true}, function() {
 												// maybe do something
 											});
 										}
@@ -281,8 +320,14 @@ function runLocationChecks(wait) {
 	}, wait);
 }
 
-function showItems(items, total, callback) {
-	if(items.length) {
+/**
+ * Show the items acquired at a Poke Stop
+ *
+ * @param items
+ * @param callback
+ */
+function showItemsAcquired(items, callback) {
+	if(items.length > 0) {
 		var item = items.pop();
 		var id = item.item_id;
 		var info = getItemInfo(id);
@@ -290,59 +335,73 @@ function showItems(items, total, callback) {
 		var count = item.item_count;
 
 		myLog.success("\tAcquired " + count + "x " + name);
-		showItems(items, total, callback);
+		showItemsAcquired(items, callback);
 	} else {
-		callback(total);
+		callback(true);
 	}
 }
 
+/**
+ * Catch Pokemon provided
+ *
+ * @param pokemon_list
+ * @param callback
+ */
 function catchPokemon(pokemon_list, callback) {
 	if(doCatch) {
-		var pokemon = pokemon_list.pop();
-		if(pokemon !== undefined) {
-			//console.log(pokemon);
+		if(pokemon_list.length > 0) {
+			var pokemon = pokemon_list.pop();
 			getPokeballCounts(function(counts) {
 				if(counts[0] > 0) {
 					var pokedexInfo = pokeAPI.pokemonlist[parseInt(pokemon.PokedexTypeId) - 1];
 					myLog.chat('There is a ' + pokedexInfo.name + ' near!! I can try to catch it!');
 
 					pokeAPI.EncounterPokemon(pokemon, function(err, dat) {
-						//console.log(err);
-						//console.log(dat);
-						if(err != "No result") {
+						if(err) {
+							myLog.warning('Unable to encounter pokemon ' + pokedexInfo.name + " (" + err + ")");
+							setTimeout(function() {
+								catchPokemon(pokemon_list, callback);
+							}, call_wait);
+						} else {
 							if(dat.WildPokemon !== undefined && dat.WildPokemon != null) {
 								myLog.chat('Encountered pokemon ' + pokedexInfo.name + '...');
 								getBallToUse(counts, function(pokeball_id) {
 									if(pokeball_id != null) {
 										pokeAPI.CatchPokemon(pokemon, 1, 1.950, 1, pokeball_id, function(xerr, xdat) {
-											if(xerr != "No result") {
-												var status = ['Unexpected error', 'Successful catch', 'Catch Escape', 'Catch Flee', 'Missed Catch'];
-												var status_str;
-												if(xdat !== undefined) {
-													if(status[xdat.Status] !== undefined) {
-														status_str = status[xdat.Status];
-														if(xdat.Status == 1) {
-															myLog.success(status_str);
-														} else {
-															myLog.warning(status_str);
-														}
-													}
-													//console.log(xerr);
-													//console.log(xdat);
-												} else {
-													myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xdat + ")");
-												}
-											} else {
+											if(xerr) {
 												myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xerr + ")");
-											}
-
-											// any more items in array? continue loop
-											if(pokemon_list.length > 0) {
 												setTimeout(function() {
 													catchPokemon(pokemon_list, callback);
 												}, call_wait);
 											} else {
-												callback(true);
+												if(xdat !== undefined && xdat.Status !== undefined) {
+													var status = xdat.Status;
+													if(pokeAPI.catchStatuses[status] !== undefined) {
+														var status_str = pokeAPI.catchStatuses[status];
+														if(status == 1) {
+															myLog.success(status_str);
+														} else {
+															myLog.warning(status_str);
+															if(status == 0 || status == 2) {
+																// add back to the list and try again
+																pokemon_list.push(pokemon);
+															}
+															setTimeout(function() {
+																catchPokemon(pokemon_list, callback);
+															}, call_wait);
+														}
+													} else {
+														myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xdat + ")");
+														setTimeout(function() {
+															catchPokemon(pokemon_list, callback);
+														}, call_wait);
+													}
+												} else {
+													myLog.warning("Unable to catch " + pokedexInfo.name + " (" + xdat + ")");
+													setTimeout(function() {
+														catchPokemon(pokemon_list, callback);
+													}, call_wait);
+												}
 											}
 										});
 									} else {
@@ -351,24 +410,9 @@ function catchPokemon(pokemon_list, callback) {
 								});
 							} else {
 								myLog.warning('Invalid value in WildPokemon when trying to encounter pokemon' + pokedexInfo.name + " (might be out of room...)");
-								// any more items in array? continue loop
-								if(pokemon_list.length > 0) {
-									setTimeout(function() {
-										catchPokemon(pokemon_list, callback);
-									}, call_wait);
-								} else {
-									callback(true);
-								}
-							}
-						} else {
-							myLog.warning('Unable to encounter pokemon ' + pokedexInfo.name + " (" + err + ")");
-							// any more items in array? continue loop
-							if(pokemon_list.length > 0) {
 								setTimeout(function() {
 									catchPokemon(pokemon_list, callback);
 								}, call_wait);
-							} else {
-								callback(true);
 							}
 						}
 					});
@@ -386,6 +430,12 @@ function catchPokemon(pokemon_list, callback) {
 	}
 }
 
+/**
+ * Get the Poke ball to use
+ *
+ * @param pokeball_counts
+ * @param callback
+ */
 function getBallToUse(pokeball_counts, callback) {
 	var i = 0;
 	for(var ballIndex in pokeball_counts) {
@@ -402,211 +452,271 @@ function getBallToUse(pokeball_counts, callback) {
 	}
 }
 
-function showInventory(wait, callback) {
+/**
+ * Show inventory
+ *
+ * @param options
+ * @param callback
+ */
+function showInventory(options, callback) {
 	// wait between tries
-	setTimeout(function() {
-		pokeAPI.GetInventory(function(err, data) {
-			if(err) {
-				myLog.error("From showInventory->pokeAPI.GetInventory:");
-				myLog.error(err);
-				myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
-				showInventory(retry_wait, callback);
-			} else {
-				var total = 0;
-				//console.log(util.inspect(data, {showHidden: false, depth: null}))
-				for(var i in data.inventory_delta.inventory_items) {
-					var entry = data.inventory_delta.inventory_items[i].inventory_item_data;
-					if(entry.item != null) {
-						var item = entry.item;
-						var itemID = item.item_id;
-						var itemInfo = getItemInfo(itemID);
-						var itemName = itemInfo.name;
-						var itemCount = item.count;
-						if(itemCount != null && itemName != "Incubator (Unlimited)") {
-							total += itemCount;
-						}
-						myLog.info(itemCount + "x " + itemName + "s");
-					}
-				}
-				myLog.info("######### " + total + " / " + item_storage + " items #########");
-				callback(true);
-			}
-		});
-	}, wait);
-}
-
-function showPokemon(wait, callback) {
-	// wait between tries
-	setTimeout(function() {
-		pokeAPI.GetInventory(function(err, data) {
-			if(err) {
-				myLog.error("From showPokemon->pokeAPI.GetInventory:");
-				myLog.error(err);
-				myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
-				showPokemon(retry_wait, callback);
-			} else {
-				var total = 0;
-				var pokemon_list = {};
-				var scrap_exclude = [];
-				for(var i in data.inventory_delta.inventory_items) {
-					var entry = data.inventory_delta.inventory_items[i].inventory_item_data;
-					if(entry.pokemon != null) {
-						var pokemon = entry.pokemon;
-						if(pokemon.is_egg == null) {
-							total++;
-							var pokemonId = pokemon.pokemon_id;
-							if(pokemon_list[pokemonId] == undefined) {
-								pokemon_list[pokemonId] = [];
-							}
-							var pokemonInfo = pokeAPI.pokemonlist[pokemonId - 1];
-							pokemon.info = pokemonInfo;
-							pokemon_list[pokemonId].push(pokemon);
-							//console.log(pokemonInfo);
-							if(pokemon.individual_attack == 15 && pokemon.individual_defense == 15 && pokemon.individual_stamina == 15) {
-								myLog.success("############### PERFECT ###################");
-								scrap_exclude.push(pokemon.id);
-							}
-							if(pokemon.favorite) {
-								myLog.chat("############### FAVORITE ###################");
-								scrap_exclude.push(pokemon.id);
-							}
-							myLog.info(pokemonInfo.name + "\tCP: " + pokemon.cp + "\tHP: " + pokemon.stamina + "/" + pokemon.stamina_max + "\tAT: " + pokemon.individual_attack + "\tDE: " + pokemon.individual_defense + "\tST: " + pokemon.individual_stamina);
-							//console.log(pokeAPI.moveList[pokemon.move_1]);
-							//console.log(pokeAPI.moveList[pokemon.move_2]);
-							/*
-							 cp: 125,
-							 stamina: 26,
-							 stamina_max: 26,
-							 individual_attack: 13,
-							 individual_defense: 12,
-							 individual_stamina: 9,
-							 */
-
-							/*{ id: Long { low: -1246729654, high: 1755378363, unsigned: true },
-							 pokemon_id: 78,
-							 cp: 125,
-							 stamina: 26,
-							 stamina_max: 26,
-							 move_1: 209,
-							 move_2: 42,
-							 deployed_fort_id: null,
-							 owner_name: null,
-							 is_egg: null,
-							 egg_km_walked_target: null,
-							 egg_km_walked_start: null,
-							 origin: null,
-							 height_m: 1.8355094194412231,
-							 weight_kg: 94.11424255371094,
-							 individual_attack: 13,
-							 individual_defense: 12,
-							 individual_stamina: 9,
-							 cp_multiplier: 0.09399999678134918,
-							 pokeball: 1,
-							 captured_cell_id: Long { low: 0, high: -2024948480, unsigned: true },
-							 battles_attacked: null,
-							 battles_defended: null,
-							 egg_incubator_id: null,
-							 creation_time_ms: Long { low: -1549583149, high: 342, unsigned: true },
-							 num_upgrades: 3,
-							 additional_cp_multiplier: 0.09865091741085052,
-							 favorite: null,
-							 nickname: null,
-							 from_fort: null }
-
-							 { id: '78',
-							 num: '078',
-							 name: 'Rapidash',
-							 img: 'http://www.serebii.net/pokemongo/pokemon/078.png',
-							 type: 'Fire',
-							 height: '1.70 m',
-							 weight: '95.0 kg',
-							 candy: 'None',
-							 egg: 'Not in Eggs' }
-
-							 */
-						}
-						/*
-
-						 var itemName = itemInfo.name;
-						 var itemCount = item.count;
-						 if(itemCount != null && itemName != "Incubator (Unlimited)") {
-						 total += itemCount;
-						 }
-						 myLog.info(itemCount + "x " + itemName + "s (" + itemID + ")");*/
-					}
-				}
-
-				myLog.info("######### " + total + " / " + poke_storage + " pokemon #########");
-
-				if(doScrap) {
-					if(allow_scrap) {
-						var pokemon_to_scrap = [];
-						for(var i in pokemon_list) {
-							//var pokemonInfo = pokeAPI.pokemonlist[i - 1];
-							var numToKeep = 1;
-							var numToScrap = pokemon_list[i].length - numToKeep;
-							if(numToScrap > 0) {
-								//myLog.info("\tSCRAPPING up to " + numToScrap + " " + pokemonInfo.name + "(s)");
-								for(var j in pokemon_list[i]) {
-									if(numToScrap > 0) {
-										numToScrap--;
-										pokemon = pokemon_list[i][j];
-										if(scrap_exclude.indexOf(pokemon.id) < 0) {
-											pokemon_to_scrap.push(pokemon);
-										} else {
-											//myLog.warning("\tNOT SCRAPPING (excluded): " + pokemon.info.name);
-										}
-									} else {
-										//myLog.info("\tDONE SCRAPPING POKEMON: " + pokemon.info.name);
-										break;
-									}
-								}
-							} else {
-								//myLog.warning("\tNOT SCRAPPING (not enough): " + numToKeep + " " + pokemonInfo.name + "(s)");
-							}
-						}
-						if(pokemon_to_scrap.length > 0) {
-							myLog.chat("Will try to scrap " + pokemon_to_scrap.length + " pokemon");
-							transferPokemon(pokemon_to_scrap, function() {
-								callback(true);
-							});
-						} else {
-							callback(true);
-						}
-					} else {
-						myLog.warning("\tNOT SCRAPPING: allow_scrap flag not set or false in user config");
-						callback(true);
-					}
+	if(options.show) {
+		setTimeout(function() {
+			pokeAPI.GetInventory(function(err, data) {
+				if(err) {
+					myLog.error("From showInventory->pokeAPI.GetInventory:");
+					myLog.error(err);
+					myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
+					showInventory(options, callback);
 				} else {
+					var total = 0;
+					//console.log(util.inspect(data, {showHidden: false, depth: null}))
+					for(var i in data.inventory_delta.inventory_items) {
+						var entry = data.inventory_delta.inventory_items[i].inventory_item_data;
+						if(entry.item != null) {
+							var item = entry.item;
+							var itemID = item.item_id;
+							var itemInfo = getItemInfo(itemID);
+							var itemName = itemInfo.name;
+							var itemCount = item.count;
+							if(itemCount != null && itemName != "Incubator (Unlimited)") {
+								total += itemCount;
+							}
+							myLog.info(itemCount + "x " + itemName + "s");
+						}
+					}
+					myLog.info("######### " + total + " / " + item_storage + " items #########");
 					callback(true);
 				}
-			}
-		});
-	}, wait);
+			});
+		}, options.wait);
+	} else {
+		callback(true);
+	}
 }
 
-function transferPokemon(pokemon_list, callback) {
-	var pokemon = pokemon_list.pop();
-	myLog.info("\tSCRAPPING POKEMON: " + pokemon.info.name + " (" + pokemon_list.length + " remaining)");
-	pokeAPI.TransferPokemon(pokemon.id, function(err, dat) {
-		if(err) {
-			myLog.error(err);
-			console.log(dat);
-		} else {
-			myLog.success("\tSCRAPPED POKEMON: " + pokemon.info.name);
+/**
+ * Get Pokemon currently owned by user
+ *
+ * @param options
+ * @param callback
+ */
+function getPokemon(options, callback) {
+	if(options.inventory == undefined || options.inventory == null) {
+		setTimeout(function() {
+			pokeAPI.GetInventory(function(err, data) {
+				if(err) {
+					myLog.error("From getPokemon->pokeAPI.GetInventory:");
+					myLog.error(err);
+					myLog.error("Wait " + (wait / 1000) + " seconds between retries");
+					getPokemon(options, callback);
+				} else {
+					options.inventory = data.inventory_delta.inventory_items;
+					getPokemon(options, callback);
+				}
+			});
+		}, options.wait);
+	} else {
+		if(options.pokemon_list == undefined || options.pokemon_list == null) {
+			options.pokemon_list = [];
 		}
+		if(options.inventory.length > 0) {
+			var entry = options.inventory.pop().inventory_item_data;
 
-		// any more items in array? continue loop
-		if(pokemon_list.length > 0) {
-			setTimeout(function() {
-				transferPokemon(pokemon_list, callback);
-			}, call_wait);
+			if(entry.pokemon != null) {
+				var pokemon = entry.pokemon;
+				if(pokemon.is_egg == null) {
+					var pokemonId = parseInt(pokemon.pokemon_id);
+					var pokemonInfo = pokeAPI.pokemonlist[pokemonId - 1];
+					pokemon.info = pokemonInfo;
+					if(options.grouped !== undefined && options.grouped) {
+						if(options.pokemon_list[pokemonId] === undefined) {
+							options.pokemon_list[pokemonId] = [];
+						}
+						options.pokemon_list[pokemonId].push(pokemon);
+					} else {
+						options.pokemon_list.push(pokemon);
+					}
+
+					var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
+					if(options.best_pokemon === undefined || options.best_pokemon == null) {
+						options.best_pokemon = {};
+					}
+					if(options.best_pokemon[pokemonId] === undefined) {
+						options.best_pokemon[pokemonId] = pokemon;
+					} else {
+						var current_best = options.best_pokemon[pokemonId];
+						var current_best_score = current_best.individual_attack + current_best.individual_defense + current_best.individual_stamina;
+						if(score > current_best_score) {
+							options.best_pokemon[pokemonId] = pokemon;
+						}
+					}
+				}
+			}
+			getPokemon(options, callback);
+		} else {
+			callback(options.pokemon_list);
+		}
+	}
+}
+
+/**
+ * Show Pokemon owned by user
+ *
+ * @param options
+ * @param callback
+ */
+function showPokemon(options, callback) {
+	if(options.show) {
+		if(options.pokemon_list === undefined) {
+			getPokemon(options, function(pokemon_list) {
+				options.pokemon_list = pokemon_list;
+				showPokemon(options, callback);
+			});
+		} else {
+			if(options.total === undefined || options.total == null) {
+				options.total = 0;
+			}
+			if(options.pokemon_list.length > 0) {
+				options.total++;
+				var pokemon = options.pokemon_list.pop();
+				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina);
+				if(pokemon.individual_attack == 15 && pokemon.individual_defense == 15 && pokemon.individual_stamina == 15) {
+					myLog.success("############### PERFECT ###################");
+					myLog.success(info_str);
+				} else if(pokemon.favorite) {
+					myLog.chat("############### FAVORITE ###################");
+					myLog.chat(info_str);
+				} else {
+					myLog.info(info_str);
+				}
+				showPokemon(options, callback);
+			} else {
+				myLog.info("######### " + options.total + " / " + poke_storage + " pokemon #########");
+				callback(true);
+			}
+		}
+	} else {
+		callback(true);
+	}
+}
+
+/**
+ * Send extra Pokemon to the meat grinder
+ *
+ * @param options
+ * @param callback
+ */
+function scrapPokemon(options, callback) {
+	if(options.scrap) {
+		if(allow_scrap) {
+			options.grouped = true;
+			getPokemon(options, function() {
+				getPokemonToScrap(options, function() {
+					myLog.chat("Will try to scrap " + options.pokemon_to_scrap.length + " pokemon");
+					transferPokemon(options.pokemon_to_scrap, function() {
+						callback(true);
+					});
+				});
+			});
+		} else {
+			myLog.warning("\tNOT SCRAPPING: allow_scrap flag not set or false in user config");
+			callback(true);
+		}
+	} else {
+		callback(true);
+	}
+}
+
+/**
+ * Get Pokemon to scrap: not perfect, favorite, or best of each type. Perfect and best could be the same.
+ *
+ * @param options
+ * @param callback
+ */
+function getPokemonToScrap(options, callback) {
+	if(options.pokemon_to_scrap === undefined || options.pokemon_to_scrap == null) {
+		options.pokemon_to_scrap = [];
+	}
+	if(options.pokemon_grouped !== undefined && options.pokemon_grouped != null && options.pokemon_grouped.length > 0) {
+		var pokemon = options.pokemon_grouped.pop();
+		var pokemon_id = parseInt(pokemon.pokemon_id);
+		var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
+
+		if(score == (15 + 15 + 15)) {
+			//console.log("WON'T SCRAP - PERFECT");
+		} else if(pokemon.favorite) {
+			//console.log("WON'T SCRAP - FAVORITE");
+		} else if(options.best_pokemon[pokemon_id] !== undefined && options.best_pokemon[pokemon_id].id == pokemon.id) {
+			//console.log("WON'T SCRAP - BEST");
+		} else {
+			options.pokemon_to_scrap.push(pokemon);
+		}
+		getPokemonToScrap(options, callback);
+	} else {
+		if(options.pokemon_list.length > 0) {
+			options.pokemon_grouped = options.pokemon_list.pop();
+			getPokemonToScrap(options, callback);
 		} else {
 			callback(true);
 		}
-	});
+	}
 }
 
+/**
+ * Format string for a more pleasing view
+ *
+ * @param str
+ * @param len
+ * @returns {*}
+ */
+function formatString(str, len) {
+	if(len === undefined || len == null) {
+		len = 10;
+	}
+	while(str.length < len) {
+		str = str + " ";
+	}
+	return str;
+}
+
+/**
+ * Send Pokemon to the meat grinder
+ *
+ * @param pokemon_list
+ * @param callback
+ */
+function transferPokemon(pokemon_list, callback) {
+	if(pokemon_list.length > 0) {
+		var pokemon = pokemon_list.pop();
+		myLog.info("\tSCRAPPING POKEMON: " + pokemon.info.name + " (" + pokemon_list.length + " remaining)");
+		pokeAPI.TransferPokemon(pokemon.id, function(err, dat) {
+			if(err) {
+				myLog.error(err);
+				console.log(dat);
+			} else {
+				myLog.success("\tSCRAPPED POKEMON: " + pokemon.info.name);
+			}
+
+			// any more items in array? continue loop
+			if(pokemon_list.length > 0) {
+				setTimeout(function() {
+					transferPokemon(pokemon_list, callback);
+				}, call_wait);
+			} else {
+				callback(true);
+			}
+		});
+	} else {
+		callback(true);
+	}
+}
+
+/**
+ * Get count of different Poke balls
+ *
+ * @param callback
+ */
 function getPokeballCounts(callback) {
 	pokeAPI.GetInventory(function(err, data) {
 		var pokeballs = [];
@@ -644,6 +754,12 @@ function getPokeballCounts(callback) {
 	});
 }
 
+/**
+ * Check forts nearby
+ *
+ * @param fortCells
+ * @param callback
+ */
 function checkForts(fortCells, callback) {
 	var options = {};
 
@@ -657,6 +773,12 @@ function checkForts(fortCells, callback) {
 	});
 }
 
+/**
+ * Hit Poke stops nearby
+ *
+ * @param options
+ * @param callback
+ */
 function getPokeStops(options, callback) {
 	if(options.items === undefined) {
 		options.items = [];
@@ -692,8 +814,8 @@ function getPokeStops(options, callback) {
 	}
 }
 
-
 /**
+ * Get Poke stops nearby
  *
  * @param options 		should contain cellsNearby and pokeStops arrays
  * @param callback
@@ -716,6 +838,12 @@ function getPokeStopsNearby(options, callback) {
 	}
 }
 
+/**
+ * Checks if Poke stops are close enough to hit
+ *
+ * @param options
+ * @param callback
+ */
 function arePokeStopsNearby(options, callback) {
 	if(options.pokeStops === undefined) {
 		options.pokeStops = [];
@@ -744,6 +872,12 @@ function arePokeStopsNearby(options, callback) {
 	}
 }
 
+/**
+ * Get and format locations contained in user config
+ *
+ * @param config_locations
+ * @returns {Array}
+ */
 function getLocations(config_locations) {
 	var locations = [];
 	if(config_locations !== undefined && config_locations != null && config_locations.coords !== undefined) {
@@ -764,6 +898,12 @@ function getLocations(config_locations) {
 	return locations;
 }
 
+/**
+ * Add some variation to location provided
+ *
+ * @param location
+ * @returns {*}
+ */
 function tweakLocation(location) {
 	var new_location = location;
 	var lat_str = location.coords.latitude.toString();
@@ -780,10 +920,22 @@ function tweakLocation(location) {
 	return new_location;
 }
 
+/**
+ *
+ * @param num
+ * @returns {number}
+ */
 function toRad(num) {
 	return num * Math.PI / 180;
 }
 
+/**
+ * Get distance between two points
+ *
+ * @param point1
+ * @param point2
+ * @returns {number}
+ */
 function distance(point1, point2) {
 	////////////////////////////////////////////////
 	//Figure out how many miles between points
@@ -800,6 +952,12 @@ function distance(point1, point2) {
 	return distanceBetweenPoints / 0.621371; //convert to miles
 }
 
+/**
+ * Get item info
+ *
+ * @param id
+ * @returns {*}
+ */
 function getItemInfo(id) {
 	if(typeof id == "undefined") {
 		return json;
