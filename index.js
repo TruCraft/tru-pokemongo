@@ -211,18 +211,17 @@ function main() {
 				showPokemon({wait: retry_wait, show: doShowPokemon}, function() {
 					scrapPokemon({wait: retry_wait, scrap: doScrap}, function() {
 						if(doLoop) {
-							// wait to start
-							setTimeout(function() {
-								runLoop(function() {
-									if(break_loop) {
-										// start back up if the process exited
-										break_loop = false;
-										pokeAPI = new PokemonGO.Pokeio();
-										myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
-										setTimeout(main(), restart_wait);
-									}
-								});
-							}, call_wait);
+							runLoop(function() {
+								if(break_loop) {
+									// start back up if the process exited
+									break_loop = false;
+									pokeAPI = new PokemonGO.Pokeio();
+									myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
+									setTimeout(function() {
+										main();
+									}, restart_wait);
+								}
+							});
 						}
 					});
 				});
@@ -349,6 +348,7 @@ function showItemsAcquired(items, callback) {
  * @param pokemon_list
  * @param callback
  */
+// TODO: upon catch, evaluate pokemon - favorite perfect ones
 function catchPokemon(pokemon_list, callback) {
 	if(doCatch) {
 		if(pokemon_list.length > 0) {
@@ -365,55 +365,78 @@ function catchPokemon(pokemon_list, callback) {
 								catchPokemon(pokemon_list, callback);
 							}, call_wait);
 						} else {
-							if(dat.WildPokemon !== undefined && dat.WildPokemon != null) {
-								myLog.chat('Encountered pokemon ' + pokedexInfo.name + '...');
-								getBallToUse(counts, function(pokeball_id) {
-									if(pokeball_id != null) {
-										// pokemon, normalizedHitPosition, normalizedReticleSize, spinModifier, pokeball
-										// TODO: need to add some variation to this
-										pokeAPI.CatchPokemon(pokemon, 1, 1.950, 1, pokeball_id, function(xerr, xdat) {
-											if(xerr !== undefined && xerr != "No result") {
-												myLog.warning("Unable to catch " + pokedexInfo.name + "; ERROR: " + xerr);
-												setTimeout(function() {
-													catchPokemon(pokemon_list, callback);
-												}, call_wait);
-											} else {
-												if(xdat !== undefined && xdat.Status !== undefined) {
-													var status = xdat.Status;
-													if(pokeAPI.catchStatuses[status] !== undefined) {
-														var status_str = pokeAPI.catchStatuses[status];
-														if(status == 1) {
-															myLog.success(status_str);
-														} else {
-															myLog.warning(status_str);
-															if(status == 0 || status == 2) {
-																// add back to the list and try again
-																pokemon_list.push(pokemon);
+							if(dat.EncounterStatus !== undefined) {
+								var encounter_status = dat.EncounterStatus;
+								if(encounter_status == 1 && dat.WildPokemon !== undefined && dat.WildPokemon != null) {
+									myLog.chat('Encountered pokemon ' + pokedexInfo.name + '...');
+									getBallToUse(counts, function(pokeball_id) {
+										if(pokeball_id != null) {
+											var hitPosition = 1;
+											//var reticleSize = 1.950;
+											var min = 1850;
+											var max = 1950;
+											var reticleSize = (Math.floor(Math.random() * (max - min + 1)) + min) / 1000;
+											//var spinModifier = 1;
+											min = 85;
+											max = 100;
+											var spinModifier = (Math.floor(Math.random() * (max - min + 1)) + min) / 100;
+											myLog.chat("\t\t#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
+											pokeAPI.CatchPokemon(pokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(xerr, xdat) {
+												if(xerr !== undefined && xerr != "No result") {
+													myLog.warning("Unable to catch " + pokedexInfo.name + "; ERROR: " + xerr);
+													setTimeout(function() {
+														catchPokemon(pokemon_list, callback);
+													}, call_wait);
+												} else {
+													if(xdat !== undefined && xdat.Status !== undefined) {
+														var status = xdat.Status;
+														if(pokeAPI.catchStatuses[status] !== undefined) {
+															var status_str = pokeAPI.catchStatuses[status];
+															if(status == 1) {
+																myLog.success(status_str + " " + pokedexInfo.name);
+															} else {
+																myLog.warning(status_str + " " + pokedexInfo.name);
+																if(status == 0 || status == 2) {
+																	// add back to the list and try again
+																	pokemon_list.push(pokemon);
+																}
+																setTimeout(function() {
+																	catchPokemon(pokemon_list, callback);
+																}, call_wait);
 															}
+														} else {
+															myLog.warning("Unable to catch " + pokedexInfo.name + "; status not accounted for (" + xdat + ")");
 															setTimeout(function() {
 																catchPokemon(pokemon_list, callback);
 															}, call_wait);
 														}
 													} else {
-														myLog.warning("Unable to catch " + pokedexInfo.name + "; status not accounted for (" + xdat + ")");
+														myLog.warning("Unable to catch " + pokedexInfo.name + "; status not defined (" + xdat + ")");
 														setTimeout(function() {
 															catchPokemon(pokemon_list, callback);
 														}, call_wait);
 													}
-												} else {
-													myLog.warning("Unable to catch " + pokedexInfo.name + "; status not defined (" + xdat + ")");
-													setTimeout(function() {
-														catchPokemon(pokemon_list, callback);
-													}, call_wait);
 												}
-											}
-										});
+											});
+										} else {
+											callback(true);
+										}
+									});
+								} else {
+									var encounter_status_string;
+									if(pokeAPI.encounterStatuses[encounter_status] !== undefined) {
+										encounter_status_string = pokeAPI.encounterStatuses[encounter_status];
 									} else {
-										callback(true);
+										encounter_status_string = encounter_status;
 									}
-								});
+									myLog.warning('There was a problem when trying to encounter pokemon' + pokedexInfo.name + " (" + encounter_status_string + ")");
+									console.log(dat);
+									setTimeout(function() {
+										catchPokemon(pokemon_list, callback);
+									}, call_wait);
+								}
 							} else {
-								myLog.warning('Invalid value in WildPokemon when trying to encounter pokemon' + pokedexInfo.name + " (might be out of room...)");
+								myLog.warning('EncounterStatus is undefined when trying to encounter pokemon' + pokedexInfo.name);
 								console.log(dat);
 								setTimeout(function() {
 									catchPokemon(pokemon_list, callback);
@@ -448,6 +471,7 @@ function getBallToUse(pokeball_counts, callback) {
 		if(ballIndex != 0) {
 			if(pokeball_counts[ballIndex] != null && pokeball_counts[ballIndex] > 0) {
 				callback(parseInt(ballIndex));
+				return;
 			}
 
 			if(i > pokeball_counts.length) {
@@ -571,6 +595,7 @@ function getPokemon(options, callback) {
  * @param options
  * @param callback
  */
+// TODO: favorite perfect pokemon that are not already favorite
 function showPokemon(options, callback) {
 	if(options.show) {
 		if(options.pokemon_list === undefined) {
@@ -589,6 +614,7 @@ function showPokemon(options, callback) {
 				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + "SCORE: " + formatString(score, 3) + "/" + formatString(perfect_score, 5);
 				if(score == perfect_score) {
 					myLog.success("############### PERFECT ###################");
+					// add to favorites if not already
 					myLog.success(info_str);
 				} else if(pokemon.favorite) {
 					myLog.chat("############### FAVORITE ###################");
@@ -884,6 +910,7 @@ function arePokeStopsNearby(options, callback) {
  * @param config_locations
  * @returns {Array}
  */
+// TODO: have sets of coordinates defined and rotate between sets on failure and auto-reset
 function getLocations(config_locations) {
 	var locations = [];
 	if(config_locations !== undefined && config_locations != null && config_locations.coords !== undefined) {
