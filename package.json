@@ -1,6 +1,6 @@
 {
   "name": "tru-pokemongo",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "NodeJS Pokemon Go",
   "main": "index.js",
   "dependencies": {
