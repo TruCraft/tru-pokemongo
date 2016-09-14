@@ -598,15 +598,25 @@ function trashItems(items, callback) {
 				if(err) {
 					myLog.error(err);
 				} else {
-
 					if(dat !== undefined && dat.result !== undefined && dat.result != null) {
-						myLog.info(dat.result);
-						var count = 0;
-						if(dat.new_count != null) {
-							count = dat.new_count;
+						if(dat.result == 1) {
+							myLog.success("Successfully trashed " + items[id] + " " + itemName + "s");
+							var count = 0;
+							if(dat.new_count != null) {
+								count = dat.new_count;
+							}
+							myLog.info(count + " " + itemName + "s left");
+						} else {
+							var status = dat.result;
+							if(statuses.recycle[dat.result] !== undefined) {
+								status = statuses.recycle[dat.result];
+							}
+							myLog.warning("There was a problem trashing " + itemName + "s: " + status);
 						}
-						myLog.info(count + " " + itemName + "s left");
+
 					} else {
+						console.log(id);
+						console.log(items[id]);
 						console.log(dat);
 					}
 				}
@@ -1214,6 +1224,9 @@ function buildVarsFromProto() {
 	if(statuses.catch === undefined) {
 		statuses.catch = {};
 	}
+	if(statuses.recycle === undefined) {
+		statuses.recycle = {};
+	}
 
 	var obj = pokeAPI.pokemonProto.ResponseEnvelop.EncounterResponse.Status;
 	for(i in obj) {
@@ -1225,6 +1238,12 @@ function buildVarsFromProto() {
 	for(i in obj) {
 		var str = i.replace(/_/g, " ").toLowerCase();
 		statuses.catch[obj[i]] = str;
+	}
+
+	obj = pokeAPI.pokemonProto.ResponseEnvelop.RecycleInventoryItemResponse.Result;
+	for(i in obj) {
+		var str = i.replace(/_/g, " ").toLowerCase();
+		statuses.recycle[obj[i]] = str;
 	}
 }
 
