@@ -46,6 +46,12 @@ const optionDefinitions = [
 				type: Boolean,
 				description: 'Show Pokemon'
 			}, {
+				name: 'write',
+				alias: 'w',
+				type: String,
+				typeLabel: '[underline]{filename}',
+				description: 'Coordinates file to be written to the ./coords/ directory'
+			}, {
 				name: 'username',
 				alias: 'u',
 				type: String,
@@ -76,9 +82,14 @@ var doShowInventory = flags.inventory || false;
 var doShowPokemon = flags.pokemon || false;
 
 var username = flags.username;
+var write_file = flags.write;
 
 if(username == null) {
 	showUsage("You must provide a username (-u)");
+}
+
+if(write_file == null) {
+	showUsage("You must provide a filename with the write flag (-w)");
 }
 
 if(doCatch && !doLoop) {
@@ -106,6 +117,21 @@ for(var i in pokeAPI.pokemonlist) {
 
 // config files
 var configsDir = __dirname + "/configs";
+if(write_file != null) {
+	var coordFilesDir = __dirname + "/coord_files/";
+	mkdirp(coordFilesDir, function(err) {
+		// path was created unless there was error
+		if(err) {
+			throw "Unable to create coord files dir: " + coordFilesDir;
+		}
+
+		var coords_file = coordFilesDir + write_file;
+		var header = "lat,lon,name";
+		fs.appendFile(coords_file, header + "\n", function(err) {
+			if(err) throw err;
+		});
+	});
+}
 var accountConfigFile = configsDir + "/" + username + ".json";
 
 var account_config = [];
@@ -254,8 +280,9 @@ function main() {
 								pokeAPI = new PokemonGO.Pokeio();
 								myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
 								setTimeout(function() {
-									main();
+									init();
 								}, restart_wait);
+								return;
 							}
 						});
 					}
@@ -548,7 +575,7 @@ function showInventory(options, callback) {
 					myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
 					showInventory(options, callback);
 				} else {
-					var items_to_trash = {};
+					var items_to_trash = [];
 					var total = 0;
 					//console.log(util.inspect(data, {showHidden: false, depth: null}))
 					for(var i in data.inventory_delta.inventory_items) {
@@ -567,7 +594,7 @@ function showInventory(options, callback) {
 							}
 
 							if(trash_items != null && trash_items.indexOf(itemName) > -1 && itemCount != null) {
-								items_to_trash[itemID] = itemCount;
+								items_to_trash.push({id: itemID, count: itemCount});
 							}
 						}
 					}
@@ -590,40 +617,37 @@ function showInventory(options, callback) {
 }
 
 function trashItems(items, callback) {
-	if(Object.keys(items).length > 0) {
-		for(var id in items) {
-			pokeAPI.DropItem(parseInt(id), parseInt(items[id]), function(err, dat) {
-				var itemInfo = getItemInfo(id);
-				var itemName = itemInfo.name;
-				if(err) {
-					myLog.error(err);
-				} else {
-					if(dat !== undefined && dat.result !== undefined && dat.result != null) {
-						if(dat.result == 1) {
-							myLog.success("Successfully trashed " + items[id] + " " + itemName + "s");
-							var count = 0;
-							if(dat.new_count != null) {
-								count = dat.new_count;
-							}
-							myLog.info(count + " " + itemName + "s left");
-						} else {
-							var status = dat.result;
-							if(statuses.recycle[dat.result] !== undefined) {
-								status = statuses.recycle[dat.result];
-							}
-							myLog.warning("There was a problem trashing " + itemName + "s: " + status);
+	if(items.length > 0) {
+		var item = items.pop();
+		pokeAPI.DropItem(item.id, item.count, function(err, dat) {
+			var itemInfo = getItemInfo(item.id);
+			var itemName = itemInfo.name;
+			if(err) {
+				myLog.error(err);
+			} else {
+				if(dat !== undefined && dat.result !== undefined && dat.result != null) {
+					if(dat.result == 1) {
+						myLog.success("Successfully trashed " + item.count + " " + itemName + "s");
+						var count = 0;
+						if(dat.new_count != null) {
+							count = dat.new_count;
 						}
-
+						myLog.info(count + " " + itemName + "s left");
 					} else {
-						console.log(id);
-						console.log(items[id]);
-						console.log(dat);
+						var status = dat.result;
+						if(statuses.recycle[dat.result] !== undefined) {
+							status = statuses.recycle[dat.result];
+						}
+						myLog.warning("There was a problem trashing " + itemName + "s: " + status);
 					}
+
+				} else {
+					console.log(item);
+					console.log(dat);
 				}
-				delete items[id];
-				trashItems(items, callback);
-			});
-		}
+			}
+			trashItems(items, callback);
+		});
 	} else {
 		callback(true);
 	}
@@ -642,7 +666,7 @@ function getPokemon(options, callback) {
 				if(err) {
 					myLog.error("From getPokemon->pokeAPI.GetInventory:");
 					myLog.error(err);
-					myLog.error("Wait " + (wait / 1000) + " seconds between retries");
+					myLog.error("Wait " + (options.wait / 1000) + " seconds between retries");
 					getPokemon(options, callback);
 				} else {
 					options.inventory = data.inventory_delta.inventory_items;
@@ -1135,10 +1159,17 @@ function getIntermediatePoints(options, callback) {
  * @param label
  */
 function addToLocations(latlon, label) {
-	//console.log(latlon.lat + "," + latlon.lon + ",");
+	var str = latlon.lat + "," + latlon.lon + ",";
 	var coords = [latlon.lat, latlon.lon];
 	if(label !== undefined && label != null) {
+		str = str + label;
 		coords.push(label);
+	}
+	if(coords_file !== undefined) {
+		//console.log(str);
+		fs.appendFile(coords_file, str + "\n", function(err) {
+			if(err) throw err;
+		});
 	}
 	var loc = configCoords(coords);
 	locations.push(loc);
