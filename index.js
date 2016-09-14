@@ -5,6 +5,7 @@
 const util = require('util');
 const commandLineArgs = require('command-line-args');
 const getUsage = require('command-line-usage');
+const LatLon = require('geodesy').LatLonSpherical;
 
 const optionDefinitions = [
 	{
@@ -29,6 +30,11 @@ const optionDefinitions = [
 				alias: 's',
 				type: Boolean,
 				description: 'Scrap duplicate Pokemon (must have the "allow_scrap" parameter in the user config file)'
+			}, {
+				name: 'trash',
+				alias: 't',
+				type: Boolean,
+				description: 'Trash items defined in user config file (trash_items parameter)'
 			}, {
 				name: 'inventory',
 				alias: 'i',
@@ -65,6 +71,7 @@ var flags = commandLineArgs(optionDefinitions[1].optionList);
 var doLoop = flags.loop || false;
 var doCatch = flags.catch || false;
 var doScrap = flags.scrap || false;
+var doTrash = flags.trash || false;
 var doShowInventory = flags.inventory || false;
 var doShowPokemon = flags.pokemon || false;
 
@@ -85,6 +92,9 @@ var PokemonGO = require('pokemon-go-node-api');
 
 // using var so you can login with multiple users
 var pokeAPI = new PokemonGO.Pokeio();
+
+var statuses = {};
+buildVarsFromProto();
 
 var pokemon_name_max_len = 0;
 
@@ -136,12 +146,7 @@ var password = process.env.PGO_PASSWORD || account_config.password;
 var provider = process.env.PGO_PROVIDER || account_config.provider;
 
 var allow_scrap = account_config.allow_scrap || false;
-
-var current_location = 0;
-var locations = getLocations(account_config.locations);
-var location = locations[current_location];
-var num_locations = locations.length;
-var location_num = 0;
+var trash_items = account_config.trash_items || null;
 
 var interval_obj;
 var interval_min = 10000;
@@ -149,7 +154,7 @@ var interval_max = 30000;
 var interval;
 
 var retry_wait = 10000;
-var call_wait = 3000;
+var call_wait = 2500;
 
 var poke_storage = 0;
 var item_storage = 0;
@@ -160,12 +165,18 @@ var restart_wait = (1000 * 60) * restart_wait_min;
 
 var perfect_score = (15 + 15 + 15);
 
-main();
+var max_dist = 40;
 
-/**
- * Main process
- */
-function main() {
+var current_location = -1;
+//var config_locations = getLocations(account_config.locations);
+var locations = [];
+//var location = config_locations[0];
+var location_num = 0;
+var location = configCoords(account_config.start_point);
+
+init();
+
+function init() {
 	pokeAPI.init(username, password, location, provider, function(err) {
 		if(err) {
 			myLog.error("From main:");
@@ -173,14 +184,21 @@ function main() {
 			myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
 			// wait between tries
 			setTimeout(function() {
-				main();
+				init();
 			}, retry_wait);
 			return;
+		} else {
+			getFortsNearPoint({wait: call_wait}, function(pokeStops) {
+				getPath({locations: pokeStops}, function() {
+					main();
+				});
+			});
 		}
+	});
+}
 
-		myLog.info('Current location: ' + pokeAPI.playerInfo.locationName);
-		myLog.info('lat/long/alt: : ' + pokeAPI.playerInfo.latitude + ' ' + pokeAPI.playerInfo.longitude + ' ' + pokeAPI.playerInfo.altitude);
-
+function getProfile(wait, callback) {
+	setTimeout(function() {
 		pokeAPI.GetProfile(function(err, profile) {
 			if(err) {
 				myLog.error("From main->pokeAPI.GetProfile:");
@@ -188,42 +206,59 @@ function main() {
 				myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
 				// wait between tries
 				setTimeout(function() {
-					main();
+					getProfile(wait, callback);
 				}, retry_wait);
-				return;
+			} else {
+				poke_storage = profile.poke_storage;
+				item_storage = profile.item_storage;
+				myLog.info('Username: ' + profile.username);
+				myLog.info('Poke Storage: ' + poke_storage);
+				myLog.info('Item Storage: ' + item_storage);
+
+				var poke = 0;
+				if(profile.currency[0].amount) {
+					poke = profile.currency[0].amount;
+				}
+
+				myLog.info('Pokecoin: ' + poke);
+				myLog.info('Stardust: ' + profile.currency[1].amount);
+				callback(true);
 			}
+		});
+	}, wait);
+}
 
-			poke_storage = profile.poke_storage;
-			item_storage = profile.item_storage;
-			myLog.info('Username: ' + profile.username);
-			myLog.info('Poke Storage: ' + poke_storage);
-			myLog.info('Item Storage: ' + item_storage);
+/**
+ * Main process
+ */
+function main() {
+	myLog.info('Current location: ' + pokeAPI.playerInfo.locationName);
+	myLog.info('lat/long/alt: : ' + pokeAPI.playerInfo.latitude + ' ' + pokeAPI.playerInfo.longitude + ' ' + pokeAPI.playerInfo.altitude);
 
-			var poke = 0;
-			if(profile.currency[0].amount) {
-				poke = profile.currency[0].amount;
-			}
+	getProfile(call_wait, function() {
+		/*pokeAPI.GetHatchedEggs(function(err, res) {
+			console.log("HATCHED EGGS");
+			console.log(err);
+			console.log(res);
+			//process.exit();
+		});*/
 
-			myLog.info('Pokecoin: ' + poke);
-			myLog.info('Stardust: ' + profile.currency[1].amount);
-
-			showInventory({wait: retry_wait, show: doShowInventory}, function() {
-				showPokemon({wait: retry_wait, show: doShowPokemon}, function() {
-					scrapPokemon({wait: retry_wait, scrap: doScrap}, function() {
-						if(doLoop) {
-							runLoop(function() {
-								if(break_loop) {
-									// start back up if the process exited
-									break_loop = false;
-									pokeAPI = new PokemonGO.Pokeio();
-									myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
-									setTimeout(function() {
-										main();
-									}, restart_wait);
-								}
-							});
-						}
-					});
+		showInventory({wait: retry_wait, show: doShowInventory, trash: doTrash}, function() {
+			showPokemon({wait: retry_wait, show: doShowPokemon}, function() {
+				scrapPokemon({wait: retry_wait, scrap: doScrap}, function() {
+					if(doLoop) {
+						runLoop(function() {
+							if(break_loop) {
+								// start back up if the process exited
+								break_loop = false;
+								pokeAPI = new PokemonGO.Pokeio();
+								myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
+								setTimeout(function() {
+									main();
+								}, restart_wait);
+							}
+						});
+					}
 				});
 			});
 		});
@@ -238,7 +273,7 @@ function main() {
 function runLoop(callback) {
 	if(!break_loop) {
 		runLocationChecks(call_wait);
-		interval = Math.floor((Math.random() * interval_max) + interval_min);
+		interval = rand(interval_min, interval_max);
 		clearInterval(interval_obj);
 		myLog.info("Wait interval " + (interval / 1000) + " seconds");
 		interval_obj = setInterval(runLoop, interval, callback);
@@ -263,7 +298,7 @@ function runLocationChecks(wait) {
 				return;
 			} else {
 				current_location++;
-				if(current_location >= num_locations) {
+				if(current_location >= locations.length) {
 					current_location = 0;
 				}
 				location_num = current_location + 1;
@@ -277,7 +312,7 @@ function runLocationChecks(wait) {
 						if(location.label !== undefined) {
 							label = location.label;
 						}
-						myLog.add("Changed location: " + data.latitude + "," + data.longitude + " (" + location_num + " / " + num_locations + ") " + label);
+						myLog.add("Changed location: " + data.latitude + "," + data.longitude + " (" + location_num + " / " + locations.length + ") " + label);
 
 						if(hb != undefined && hb.cells != undefined) {
 							var forts = [];
@@ -293,7 +328,7 @@ function runLocationChecks(wait) {
 
 								// get list of catchable pokemon
 								for(var j = cell.MapPokemon.length - 1; j >= 0; j--) {
-									myLog.standout(pokeAPI.pokemonlist[parseInt(cell.MapPokemon[j].PokedexTypeId) - 1].name + " is close enough to catch");
+									myLog.attention(pokeAPI.pokemonlist[parseInt(cell.MapPokemon[j].PokedexTypeId) - 1].name + " is close enough to catch");
 									if(pokemon_to_catch.indexOf(cell.MapPokemon[j]) < 0) {
 										pokemon_to_catch.push(cell.MapPokemon[j]);
 									}
@@ -305,7 +340,7 @@ function runLocationChecks(wait) {
 									var total = items.length;
 									showItemsAcquired(items, function() {
 										if(total != null && total > 0) {
-											showInventory({wait: call_wait, show: true}, function() {
+											showInventory({wait: call_wait, show: true, trash: doTrash}, function() {
 												// maybe do something
 											});
 										}
@@ -375,11 +410,11 @@ function catchPokemon(pokemon_list, callback) {
 											//var reticleSize = 1.950;
 											var min = 1850;
 											var max = 1950;
-											var reticleSize = (Math.floor(Math.random() * (max - min + 1)) + min) / 1000;
+											var reticleSize = rand(min, max) / 1000;
 											//var spinModifier = 1;
 											min = 85;
 											max = 100;
-											var spinModifier = (Math.floor(Math.random() * (max - min + 1)) + min) / 100;
+											var spinModifier = rand(min, max) / 100;
 											myLog.chat("\t\t#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
 											pokeAPI.CatchPokemon(pokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(xerr, xdat) {
 												if(xerr !== undefined && xerr != "No result") {
@@ -390,8 +425,8 @@ function catchPokemon(pokemon_list, callback) {
 												} else {
 													if(xdat !== undefined && xdat.Status !== undefined) {
 														var status = xdat.Status;
-														if(pokeAPI.catchStatuses[status] !== undefined) {
-															var status_str = pokeAPI.catchStatuses[status];
+														if(statuses.catch[status] !== undefined) {
+															var status_str = statuses.catch[status];
 															if(status == 1) {
 																myLog.success(status_str + " " + pokedexInfo.name);
 															} else {
@@ -400,10 +435,10 @@ function catchPokemon(pokemon_list, callback) {
 																	// add back to the list and try again
 																	pokemon_list.push(pokemon);
 																}
-																setTimeout(function() {
-																	catchPokemon(pokemon_list, callback);
-																}, call_wait);
 															}
+															setTimeout(function() {
+																catchPokemon(pokemon_list, callback);
+															}, call_wait);
 														} else {
 															myLog.warning("Unable to catch " + pokedexInfo.name + "; status not accounted for (" + xdat + ")");
 															setTimeout(function() {
@@ -424,16 +459,31 @@ function catchPokemon(pokemon_list, callback) {
 									});
 								} else {
 									var encounter_status_string;
-									if(pokeAPI.encounterStatuses[encounter_status] !== undefined) {
-										encounter_status_string = pokeAPI.encounterStatuses[encounter_status];
+									if(statuses.encounter[encounter_status] !== undefined) {
+										encounter_status_string = statuses.encounter[encounter_status];
 									} else {
 										encounter_status_string = encounter_status;
 									}
 									myLog.warning('There was a problem when trying to encounter pokemon' + pokedexInfo.name + " (" + encounter_status_string + ")");
-									console.log(dat);
-									setTimeout(function() {
-										catchPokemon(pokemon_list, callback);
-									}, call_wait);
+									// if pokemon inventory is full
+									if(encounter_status == 7) {
+										scrapPokemon({wait: retry_wait, scrap: doScrap}, function(scrapped) {
+											if(scrapped) {
+												pokemon_list.push(pokemon);
+												setTimeout(function() {
+													catchPokemon(pokemon_list, callback);
+												}, call_wait);
+											} else {
+												myLog.info("Cannot catch - unable to scrap");
+												callback(true);
+											}
+										});
+									} else {
+										console.log(dat);
+										setTimeout(function() {
+											catchPokemon(pokemon_list, callback);
+										}, call_wait);
+									}
 								}
 							} else {
 								myLog.warning('EncounterStatus is undefined when trying to encounter pokemon' + pokedexInfo.name);
@@ -489,7 +539,7 @@ function getBallToUse(pokeball_counts, callback) {
  */
 function showInventory(options, callback) {
 	// wait between tries
-	if(options.show) {
+	if(options.show || options.trash) {
 		setTimeout(function() {
 			pokeAPI.GetInventory(function(err, data) {
 				if(err) {
@@ -498,6 +548,7 @@ function showInventory(options, callback) {
 					myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
 					showInventory(options, callback);
 				} else {
+					var items_to_trash = {};
 					var total = 0;
 					//console.log(util.inspect(data, {showHidden: false, depth: null}))
 					for(var i in data.inventory_delta.inventory_items) {
@@ -511,14 +562,58 @@ function showInventory(options, callback) {
 							if(itemCount != null && itemName != "Incubator (Unlimited)") {
 								total += itemCount;
 							}
-							myLog.info(itemCount + "x " + itemName + "s");
+							if(options.show) {
+								myLog.info(itemCount + "x " + itemName + "s");
+							}
+
+							if(trash_items != null && trash_items.indexOf(itemName) > -1 && itemCount != null) {
+								items_to_trash[itemID] = itemCount;
+							}
 						}
 					}
-					myLog.info("######### " + total + " / " + item_storage + " items #########");
-					callback(true);
+					if(options.show) {
+						myLog.info("######### " + total + " / " + item_storage + " items #########");
+					}
+					if(options.trash) {
+						trashItems(items_to_trash, function() {
+							callback(true);
+						});
+					} else {
+						callback(true);
+					}
 				}
 			});
 		}, options.wait);
+	} else {
+		callback(true);
+	}
+}
+
+function trashItems(items, callback) {
+	if(Object.keys(items).length > 0) {
+		for(var id in items) {
+			pokeAPI.DropItem(parseInt(id), parseInt(items[id]), function(err, dat) {
+				var itemInfo = getItemInfo(id);
+				var itemName = itemInfo.name;
+				if(err) {
+					myLog.error(err);
+				} else {
+
+					if(dat !== undefined && dat.result !== undefined && dat.result != null) {
+						myLog.info(dat.result);
+						var count = 0;
+						if(dat.new_count != null) {
+							count = dat.new_count;
+						}
+						myLog.info(count + " " + itemName + "s left");
+					} else {
+						console.log(dat);
+					}
+				}
+				delete items[id];
+				trashItems(items, callback);
+			});
+		}
 	} else {
 		callback(true);
 	}
@@ -610,6 +705,9 @@ function showPokemon(options, callback) {
 			if(options.pokemon_list.length > 0) {
 				options.total++;
 				var pokemon = options.pokemon_list.pop();
+				/*pokeAPI.FavoritePokemon(pokemon.id, true, function() {
+					console.log("WOW, it worked...");
+				});*/
 				var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
 				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + "SCORE: " + formatString(score, 3) + "/" + formatString(perfect_score, 5);
 				if(score == perfect_score) {
@@ -653,10 +751,10 @@ function scrapPokemon(options, callback) {
 			});
 		} else {
 			myLog.warning("\tNOT SCRAPPING: allow_scrap flag not set or false in user config");
-			callback(true);
+			callback(false);
 		}
 	} else {
-		callback(true);
+		callback(false);
 	}
 }
 
@@ -796,11 +894,9 @@ function checkForts(fortCells, callback) {
 	var options = {};
 
 	options.cellsNearby = fortCells;
-	getPokeStopsNearby(options, function(pokeStops) {
-		var opts = {};
-		opts.pokeStops = pokeStops;
-		getPokeStops(opts, function(items) {
-			callback(items);
+	getPokeStopsNearby(options, function() {
+		getPokeStops(options, function() {
+			callback(options.items);
 		});
 	});
 }
@@ -842,7 +938,7 @@ function getPokeStops(options, callback) {
 			getPokeStops(options, callback);
 		});
 	} else {
-		callback(options.items);
+		callback(true);
 	}
 }
 
@@ -853,20 +949,30 @@ function getPokeStops(options, callback) {
  * @param callback
  */
 function getPokeStopsNearby(options, callback) {
-	var opts = {};
 	if(options.pokeStops === undefined) {
 		options.pokeStops = [];
-	} else {
-		opts.pokeStops = options.pokeStops;
 	}
 	if(options.cellsNearby.length > 0) {
-		opts.forts = options.cellsNearby.pop();
-		arePokeStopsNearby(opts, function(pokeStops) {
-			options.pokeStops = pokeStops;
+		options.forts = options.cellsNearby.pop();
+		arePokeStopsNearby(options, function() {
 			getPokeStopsNearby(options, callback);
 		});
 	} else {
-		callback(options.pokeStops);
+		callback(true);
+	}
+}
+
+function getPokeStopsInView(options, callback) {
+	if(options.pokeStops === undefined) {
+		options.pokeStops = [];
+	}
+	if(options.cellsNearby.length > 0) {
+		options.forts = options.cellsNearby.pop();
+		arePokeStopsInView(options, function() {
+			getPokeStopsInView(options, callback);
+		});
+	} else {
+		callback(true);
 	}
 }
 
@@ -891,16 +997,33 @@ function arePokeStopsNearby(options, callback) {
 		//fort.FortType 1 is a pokestop - 0 is a gym
 		if(fort.FortType == 1) {
 			// whithin 40 meters
-			if(distanceToFort < 0.0248548) {
+			if(distanceToFort < max_dist) {
 				options.pokeStops.push(fort);
-				//console.log(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.FortType + ") is CLOSE ENOUGH (" + distanceToFort + ")");
+				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.FortType + ") is CLOSE ENOUGH (" + distanceToFort + ")");
 			} else {
-				//console.log(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.FortType + ") is too far away (" + distanceToFort + ")");
+				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.FortType + ") is too far away (" + distanceToFort + ")");
 			}
 		}
 		arePokeStopsNearby(options, callback);
 	} else {
-		callback(options.pokeStops);
+		callback(true);
+	}
+}
+
+function arePokeStopsInView(options, callback) {
+	if(options.pokeStops === undefined) {
+		options.pokeStops = [];
+	}
+	if(options.forts.length > 0) {
+		var fort = options.forts.pop();
+
+		//fort.FortType 1 is a pokestop - 0 is a gym
+		if(fort.FortType == 1) {
+			options.pokeStops.push(fort);
+		}
+		arePokeStopsInView(options, callback);
+	} else {
+		callback(true);
 	}
 }
 
@@ -912,7 +1035,7 @@ function arePokeStopsNearby(options, callback) {
  */
 // TODO: have sets of coordinates defined and rotate between sets on failure and auto-reset
 function getLocations(config_locations) {
-	var locations = [];
+	var _locations = [];
 	if(config_locations !== undefined && config_locations != null && config_locations.coords !== undefined) {
 		for(var i in config_locations.coords) {
 			var location = {
@@ -925,10 +1048,104 @@ function getLocations(config_locations) {
 			if(config_locations.coords[i][2] !== undefined) {
 				location.label = config_locations.coords[i][2];
 			}
-			locations.push(location);
+			_locations.push(location);
 		}
 	}
-	return locations;
+	return _locations;
+}
+
+function getPath(options, callback) {
+	if(options.locations.length > 0) {
+		var location = options.locations.shift();
+		var point = new LatLon(location.Latitude, location.Longitude);
+		if(options.last_location === undefined || options.last_location == null) {
+			options.first_location = location;
+			options.last_location = location;
+			addToLocations(point, "Poke Stop");
+			getPath(options, callback);
+		} else {
+			var last_coords = {latitude: options.last_location.Latitude, longitude: options.last_location.Longitude};
+			var current_coords = {latitude: location.Latitude, longitude: location.Longitude};
+			var dist = distance(last_coords, current_coords);
+			if(dist > max_dist) {
+				//console.log("Too far between points - need to add points between (" + dist + ")");
+				getIntermediatePoints({
+					point1: last_coords,
+					point2: current_coords,
+					percent: (max_dist / dist)
+				}, function() {
+					addToLocations(point, "Poke Stop");
+				});
+			}
+			options.last_location = location;
+			getPath(options, callback);
+		}
+	} else {
+		var last_coords = {latitude: options.last_location.Latitude, longitude: options.last_location.Longitude};
+		var first_coords = {latitude: options.first_location.Latitude, longitude: options.first_location.Longitude};
+		var dist = distance(last_coords, first_coords);
+		if(dist > max_dist) {
+			getIntermediatePoints({
+				point1: last_coords,
+				point2: first_coords,
+				percent: (max_dist / dist)
+			}, function() {
+				// do nothing
+			});
+		}
+		callback(true);
+	}
+}
+
+/**
+ *
+ * @param options
+ * @param callback
+ */
+function getIntermediatePoints(options, callback) {
+	if(options.num === undefined || options.num == null) {
+		options.num = 0;
+	}
+	options.num++;
+	var fraction = options.percent * options.num;
+	if(fraction < 1) {
+		var p1 = new LatLon(options.point1.latitude, options.point1.longitude);
+		var p2 = new LatLon(options.point2.latitude, options.point2.longitude);
+		var p = p1.intermediatePointTo(p2, fraction);
+		addToLocations(p);
+		getIntermediatePoints(options, callback);
+	} else {
+		callback(true);
+	}
+}
+
+/**
+ *
+ * @param latlon
+ * @param label
+ */
+function addToLocations(latlon, label) {
+	//console.log(latlon.lat + "," + latlon.lon + ",");
+	var coords = [latlon.lat, latlon.lon];
+	if(label !== undefined && label != null) {
+		coords.push(label);
+	}
+	var loc = configCoords(coords);
+	locations.push(loc);
+}
+
+function configCoords(coords) {
+	var location = {
+		"type": "coords",
+		"coords": {
+			"latitude": coords[0],
+			"longitude": coords[1]
+		}
+	};
+	if(coords[2] !== undefined && coords[2] != null) {
+		location.label = coords[2];
+	}
+	return location;
 }
 
 /**
@@ -941,8 +1158,8 @@ function tweakLocation(location) {
 	var new_location = location;
 	var lat_str = location.coords.latitude.toString();
 	var lon_str = location.coords.longitude.toString();
-	var lat_rand = Math.floor((Math.random() * 99) + 0).toString();
-	var lon_rand = Math.floor((Math.random() * 99) + 0).toString();
+	var lat_rand = rand(0, 99).toString();
+	var lon_rand = rand(0, 99).toString();
 
 	lat_str = lat_str.slice(0, -lat_rand.length) + lat_rand;
 	lon_str = lon_str.slice(0, -lon_rand.length) + lon_rand;
@@ -954,15 +1171,6 @@ function tweakLocation(location) {
 }
 
 /**
- *
- * @param num
- * @returns {number}
- */
-function toRad(num) {
-	return num * Math.PI / 180;
-}
-
-/**
  * Get distance between two points
  *
  * @param point1
@@ -970,19 +1178,15 @@ function toRad(num) {
  * @returns {number}
  */
 function distance(point1, point2) {
-	////////////////////////////////////////////////
-	//Figure out how many miles between points
-	////////////////////////////////////////////////
-	var earthRadius = 6371; // radius of the earth in km
-	var dLat = toRad(point2['latitude'] - point1['latitude']);
-	var dLon = toRad(point2['longitude'] - point1['longitude']);
-	var lat1 = toRad(point1['latitude']);
-	var lat2 = toRad(point2['latitude']);
+	var p1 = new LatLon(point1.latitude, point1.longitude);
+	var p2 = new LatLon(point2.latitude, point2.longitude);
+	var d = p1.distanceTo(p2); // in m
 
-	var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
-	var angle = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-	var distanceBetweenPoints = earthRadius * angle;
-	return distanceBetweenPoints / 0.621371; //convert to miles
+	return d;
+}
+
+function rand(min, max) {
+	return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 /**
@@ -992,13 +1196,91 @@ function distance(point1, point2) {
  * @returns {*}
  */
 function getItemInfo(id) {
-	if(typeof id == "undefined") {
-		return json;
+	if(id === undefined) {
+		throw "id not defined in getItemInfo";
 	}
 
 	for(var i in pokeAPI.itemlist) {
 		if(pokeAPI.itemlist[i].id == id) {
 			return pokeAPI.itemlist[i];
 		}
+	}
+}
+
+function buildVarsFromProto() {
+	if(statuses.encounter === undefined) {
+		statuses.encounter = {};
+	}
+	if(statuses.catch === undefined) {
+		statuses.catch = {};
+	}
+
+	var obj = pokeAPI.pokemonProto.ResponseEnvelop.EncounterResponse.Status;
+	for(i in obj) {
+		var str = i.replace(/_/g, " ").toLowerCase();
+		statuses.encounter[obj[i]] = str;
+	}
+
+	obj = pokeAPI.pokemonProto.ResponseEnvelop.CatchPokemonResponse.CatchStatus;
+	for(i in obj) {
+		var str = i.replace(/_/g, " ").toLowerCase();
+		statuses.catch[obj[i]] = str;
+	}
+}
+
+function getFortsNearPoint(options, callback) {
+	setTimeout(function() {
+		pokeAPI.Heartbeat(function(err, hb) {
+			if(err) {
+				myLog.error("From runLocationChecks->pokeAPI.Heartbeat:");
+				myLog.error(err);
+				// TODO: retry?
+			} else {
+				if(hb != undefined && hb.cells != undefined) {
+					options.cellsNearby = [];
+					for(var i = hb.cells.length - 1; i >= 0; i--) {
+						var cell = hb.cells[i];
+						options.cellsNearby.push(cell.Fort);
+					}
+
+					getPokeStopsInView(options, function() {
+						options.pokeStops.sort(dynamicSortMultiple("Latitude", "Longitude"));
+						callback(options.pokeStops);
+					});
+				}
+			}
+		});
+	}, options.wait);
+}
+
+function dynamicSort(property) {
+	var sortOrder = 1;
+	if(property[0] === "-") {
+		sortOrder = -1;
+		property = property.substr(1);
+	}
+	return function (a,b) {
+		var result = (a[property] < b[property]) ? -1 : (a[property] > b[property]) ? 1 : 0;
+		return result * sortOrder;
+	}
+}
+
+function dynamicSortMultiple() {
+	/*
+	 * save the arguments object as it will be overwritten
+	 * note that arguments object is an array-like object
+	 * consisting of the names of the properties to sort by
+	 */
+	var props = arguments;
+	return function (obj1, obj2) {
+		var i = 0, result = 0, numberOfProperties = props.length;
+		/* try getting a different result from 0 (equal)
+		 * as long as we have extra properties to compare
+		 */
+		while(result === 0 && i < numberOfProperties) {
+			result = dynamicSort(props[i])(obj1, obj2);
+			i++;
+		}
+		return result;
 	}
 }
