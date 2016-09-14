@@ -52,6 +52,12 @@ const optionDefinitions = [
 				typeLabel: '[underline]{filename}',
 				description: 'Coordinates file to be written to the ./coords/ directory'
 			}, {
+				name: 'begin',
+				alias: 'b',
+				type: String,
+				typeLabel: '[underline]{beginning coordinates}',
+				description: 'Coordinates from which to start and build a path (in the format lat,lon)'
+			}, {
 				name: 'username',
 				alias: 'u',
 				type: String,
@@ -68,7 +74,7 @@ function showUsage(msg) {
 		console.log(msg);
 	}
 	const usage = getUsage(optionDefinitions);
-	console.log(usage);
+		console.log(usage);
 	process.exit();
 }
 
@@ -86,10 +92,6 @@ var write_file = flags.write;
 
 if(username == null) {
 	showUsage("You must provide a username (-u)");
-}
-
-if(write_file == null) {
-	showUsage("You must provide a filename with the write flag (-w)");
 }
 
 if(doCatch && !doLoop) {
@@ -117,20 +119,24 @@ for(var i in pokeAPI.pokemonlist) {
 
 // config files
 var configsDir = __dirname + "/configs";
-if(write_file != null) {
-	var coordFilesDir = __dirname + "/coord_files/";
-	mkdirp(coordFilesDir, function(err) {
-		// path was created unless there was error
-		if(err) {
-			throw "Unable to create coord files dir: " + coordFilesDir;
-		}
-
+if(write_file !== undefined) {
+	if(write_file != null) {
+		var coordFilesDir = __dirname + "/coord_files/";
 		var coords_file = coordFilesDir + write_file;
-		var header = "lat,lon,name";
-		fs.appendFile(coords_file, header + "\n", function(err) {
-			if(err) throw err;
+		mkdirp(coordFilesDir, function(err) {
+			// path was created unless there was error
+			if(err) {
+				throw "Unable to create coord files dir: " + coordFilesDir;
+			}
+
+			var header = "lat,lon,name";
+			fs.appendFile(coords_file, header + "\n", function(err) {
+				if(err) throw err;
+			});
 		});
-	});
+	} else {
+		showUsage("You must provide a filename with the write flag (-w)");
+	}
 }
 var accountConfigFile = configsDir + "/" + username + ".json";
 
@@ -198,7 +204,13 @@ var current_location = -1;
 var locations = [];
 //var location = config_locations[0];
 var location_num = 0;
-var location = configCoords(account_config.start_point);
+
+var begin = null;
+if(flags.begin !== undefined && flags.begin != null) {
+	begin = flags.begin.split(",");
+}
+var start_point = begin || account_config.start_point;
+var location = configCoords(start_point);
 
 init();
 
@@ -1179,8 +1191,8 @@ function configCoords(coords) {
 	var location = {
 		"type": "coords",
 		"coords": {
-			"latitude": coords[0],
-			"longitude": coords[1]
+			"latitude": parseFloat(coords[0]),
+			"longitude": parseFloat(coords[1])
 		}
 	};
 	if(coords[2] !== undefined && coords[2] != null) {
