@@ -200,9 +200,8 @@ var perfect_score = (15 + 15 + 15);
 var max_dist = 40;
 
 var current_location = -1;
-//var config_locations = getLocations(account_config.locations);
 var locations = [];
-//var location = config_locations[0];
+var pokestop_locations = [];
 var location_num = 0;
 
 var begin = null;
@@ -228,6 +227,7 @@ function init() {
 		} else {
 			getFortsNearPoint({wait: call_wait}, function(pokeStops) {
 				getPath({locations: pokeStops}, function() {
+					myLog.chat(pokestop_locations.length + " Poke Stops in this path");
 					main();
 				});
 			});
@@ -1065,39 +1065,13 @@ function arePokeStopsInView(options, callback) {
 
 		//fort.FortType 1 is a pokestop - 0 is a gym
 		if(fort.FortType == 1) {
+			pokestop_locations.push(fort);
 			options.pokeStops.push(fort);
 		}
 		arePokeStopsInView(options, callback);
 	} else {
 		callback(true);
 	}
-}
-
-/**
- * Get and format locations contained in user config
- *
- * @param config_locations
- * @returns {Array}
- */
-// TODO: have sets of coordinates defined and rotate between sets on failure and auto-reset
-function getLocations(config_locations) {
-	var _locations = [];
-	if(config_locations !== undefined && config_locations != null && config_locations.coords !== undefined) {
-		for(var i in config_locations.coords) {
-			var location = {
-				"type": "coords",
-				"coords": {
-					"latitude": config_locations.coords[i][0],
-					"longitude": config_locations.coords[i][1]
-				}
-			};
-			if(config_locations.coords[i][2] !== undefined) {
-				location.label = config_locations.coords[i][2];
-			}
-			_locations.push(location);
-		}
-	}
-	return _locations;
 }
 
 function getPath(options, callback) {
