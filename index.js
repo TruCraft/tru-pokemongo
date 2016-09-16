@@ -289,12 +289,6 @@ function main() {
 			console.log(res);
 		});
 
-		pokeAPI.GetBuddyWalked(function(err, res) {
-			console.log("BUDDY WALKED");
-			console.log(err);
-			console.log(res);
-		});
-
 		showInventory({wait: retry_wait, show: doShowInventory, stats: true, trash: doTrash}, function() {
 			showPokemon({wait: retry_wait, show: doShowPokemon}, function() {
 				scrapPokemon({wait: retry_wait, scrap: doScrap}, function() {
@@ -353,6 +347,11 @@ function runLocationChecks(wait) {
 				current_location++;
 				if(current_location >= locations.length) {
 					current_location = 0;
+					pokeAPI.GetBuddyWalked(function(err, res) {
+						console.log("BUDDY WALKED");
+						console.log(err);
+						console.log(res);
+					});
 				}
 				location_num = current_location + 1;
 				if(total_distance == null) {
