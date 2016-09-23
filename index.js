@@ -10,7 +10,7 @@ const LatLon = require('geodesy').LatLonSpherical;
 var fs = require('fs');
 var logger = require('tru-logger');
 var mkdirp = require('mkdirp');
-var PokemonGoAPI = require('tru-pogoapi');
+var PokemonGoAPI = require('tru-pokemongo-api');
 
 const optionDefinitions = [
 	{
