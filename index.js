@@ -286,7 +286,7 @@ function main() {
 							if(break_loop) {
 								// start back up if the process exited
 								break_loop = false;
-								pokeAPI = new PokemonGO.Pokeio();
+								pokeAPI = new PokemonGoAPI();
 								fail_count_restart++;
 								if(fail_count_restart > 10) {
 									fail_count_restart = 0;
