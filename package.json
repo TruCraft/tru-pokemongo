@@ -7,7 +7,7 @@
     "command-line-args": "^3.0.1",
     "command-line-usage": "^3.0.3",
     "mkdirp": "*",
-    "pokemon-go-node-api": "*",
+    "tru-pokemongo-api": "*",
     "tru-logger": "*",
     "geodesy": "*"
   },

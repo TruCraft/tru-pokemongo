@@ -7,6 +7,11 @@ const commandLineArgs = require('command-line-args');
 const getUsage = require('command-line-usage');
 const LatLon = require('geodesy').LatLonSpherical;
 
+var fs = require('fs');
+var logger = require('tru-logger');
+var mkdirp = require('mkdirp');
+var PokemonGoAPI = require('tru-pogoapi');
+
 const optionDefinitions = [
 	{
 		header: 'Pokemon GO Bot',
@@ -74,7 +79,7 @@ function showUsage(msg) {
 		console.log(msg);
 	}
 	const usage = getUsage(optionDefinitions);
-		console.log(usage);
+	console.log(usage);
 	process.exit();
 }
 
@@ -98,16 +103,8 @@ if(doCatch && !doLoop) {
 	showUsage("The catch (-c) flag must be used with the loop flag (-l)");
 }
 
-var fs = require('fs');
-var logger = require('tru-logger');
-var mkdirp = require('mkdirp');
-var PokemonGO = require('pokemon-go-node-api');
-
 // using var so you can login with multiple users
-var pokeAPI = new PokemonGO.Pokeio();
-
-var statuses = {};
-buildVarsFromProto();
+var pokeAPI = new PokemonGoAPI();
 
 var pokemon_name_max_len = 0;
 
@@ -168,7 +165,7 @@ var logOptions = {
 	date: true,
 	print: true,
 	log_level: ["all"]/*,
-	prefix: account_config.username*/
+	 prefix: account_config.username*/
 };
 
 var myLog = new logger(logOptions);
@@ -194,10 +191,13 @@ var item_storage = 0;
 var break_loop = false;
 var restart_wait_min = 10;
 var restart_wait = (1000 * 60) * restart_wait_min;
+var fail_count_restart = 0;
 
 var perfect_score = (15 + 15 + 15);
 
 var max_dist = 40;
+
+var fail_count = 0;
 
 var current_location = -1;
 var locations = [];
@@ -256,19 +256,14 @@ function getProfile(wait, callback) {
 					getProfile(wait, callback);
 				}, retry_wait);
 			} else {
-				poke_storage = profile.poke_storage;
-				item_storage = profile.item_storage;
+				poke_storage = profile.max_pokemon_storage;
+				item_storage = profile.max_item_storage;
 				myLog.info('Username: ' + profile.username);
 				myLog.info('Poke Storage: ' + poke_storage);
 				myLog.info('Item Storage: ' + item_storage);
 
-				var poke = 0;
-				if(profile.currency[0].amount) {
-					poke = profile.currency[0].amount;
-				}
-
-				myLog.info('Pokecoin: ' + poke);
-				myLog.info('Stardust: ' + profile.currency[1].amount);
+				myLog.info('Pokecoin: ' + profile.currencies[0].amount);
+				myLog.info('Stardust: ' + profile.currencies[1].amount);
 				callback(true);
 			}
 		});
@@ -283,12 +278,6 @@ function main() {
 	myLog.info('lat/long/alt: : ' + pokeAPI.playerInfo.latitude + ' ' + pokeAPI.playerInfo.longitude + ' ' + pokeAPI.playerInfo.altitude);
 
 	getProfile(call_wait, function() {
-		pokeAPI.GetHatchedEggs(function(err, res) {
-			console.log("HATCHED EGGS");
-			console.log(err);
-			console.log(res);
-		});
-
 		showInventory({wait: retry_wait, show: doShowInventory, stats: true, trash: doTrash}, function() {
 			showPokemon({wait: retry_wait, show: doShowPokemon}, function() {
 				scrapPokemon({wait: retry_wait, scrap: doScrap}, function() {
@@ -298,11 +287,21 @@ function main() {
 								// start back up if the process exited
 								break_loop = false;
 								pokeAPI = new PokemonGO.Pokeio();
-								myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
-								setTimeout(function() {
-									init();
-								}, restart_wait);
-								return;
+								fail_count_restart++;
+								if(fail_count_restart > 10) {
+									fail_count_restart = 0;
+									myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
+									setTimeout(function() {
+										init();
+									}, restart_wait);
+									return;
+								} else {
+									myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries; fail_count_restart: " + fail_count_restart);
+									setTimeout(function() {
+										init();
+									}, retry_wait);
+									return;
+								}
 							}
 						});
 					}
@@ -337,7 +336,7 @@ function runLoop(callback) {
  */
 function runLocationChecks(wait) {
 	setTimeout(function() {
-		pokeAPI.Heartbeat(function(err, hb) {
+		pokeAPI.Heartbeat(function(err, res) {
 			if(err) {
 				myLog.error("From runLocationChecks->pokeAPI.Heartbeat:");
 				myLog.error(err);
@@ -347,11 +346,6 @@ function runLocationChecks(wait) {
 				current_location++;
 				if(current_location >= locations.length) {
 					current_location = 0;
-					pokeAPI.GetBuddyWalked(function(err, res) {
-						console.log("BUDDY WALKED");
-						console.log(err);
-						console.log(res);
-					});
 				}
 				location_num = current_location + 1;
 				if(total_distance == null) {
@@ -360,7 +354,7 @@ function runLocationChecks(wait) {
 					var previous_location = location;
 				}
 				location = tweakLocation(locations[current_location]);
-				pokeAPI.SetLocation(location, function(err, data) {
+				pokeAPI.SetLocation(location, function(err) {
 					if(err) {
 						myLog.error("From runLocationChecks->pokeAPI.SetLocation:");
 						myLog.error(err);
@@ -369,7 +363,7 @@ function runLocationChecks(wait) {
 						if(location.label !== undefined) {
 							label = location.label;
 						}
-						myLog.add("Changed location: " + data.latitude + "," + data.longitude + " (" + location_num + " / " + locations.length + ") " + label);
+						myLog.add("Changed location: " + location.coords.latitude + "," + location.coords.longitude + " (" + location_num + " / " + locations.length + ") " + label);
 
 						if(previous_location !== undefined) {
 							var dist = distance(previous_location.coords, location.coords);
@@ -379,39 +373,50 @@ function runLocationChecks(wait) {
 							}
 						}
 
-						if(hb != undefined && hb.cells != undefined) {
+						if(res.GET_MAP_OBJECTS !== undefined && res.GET_MAP_OBJECTS.map_cells !== undefined) {
+							var cells = res.GET_MAP_OBJECTS.map_cells;
 							var forts = [];
 							var pokemon_to_catch = [];
-							for(var i = hb.cells.length - 1; i >= 0; i--) {
-								var cell = hb.cells[i];
-								forts.push(cell.Fort);
+							for( var i in cells) {
+								var cell = cells[i];
+								if(cell.forts.length > 0) {
+									forts.push(cell.forts);
+								}
 
-								if(cell.NearbyPokemon[0]) {
-									console.log(cell.NearbyPokemon[0]);
-									var pokemon = pokeAPI.pokemonlist[parseInt(cell.NearbyPokemon[0].PokedexNumber) - 1];
-									myLog.warning('There is a ' + pokemon.name + ' near.');
+								if(cell.nearby_pokemons.length > 0) {
+									for(var i in cell.nearby_pokemons) {
+										myLog.warning('There is a ' + pokeAPI.getPokemonInfo(cell.nearby_pokemons[i]).name + ' near.');
+									}
 								}
 
 								// get list of catchable pokemon
-								for(var j = cell.MapPokemon.length - 1; j >= 0; j--) {
-									myLog.attention(pokeAPI.pokemonlist[parseInt(cell.MapPokemon[j].PokedexTypeId) - 1].name + " is close enough to catch");
-									if(pokemon_to_catch.indexOf(cell.MapPokemon[j]) < 0) {
-										pokemon_to_catch.push(cell.MapPokemon[j]);
+								if(cell.catchable_pokemons.length > 0) {
+									for(var i in cell.catchable_pokemons) {
+										myLog.attention(pokeAPI.getPokemonInfo(cell.catchable_pokemons[i]).name + " is close enough to catch");
+										if(pokemon_to_catch.indexOf(cell.catchable_pokemons[i]) < 0) {
+											pokemon_to_catch.push(cell.catchable_pokemons[i]);
+										}
 									}
 								}
 							}
 							myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
-							catchPokemon(pokemon_to_catch, function() {
-								checkForts(forts, function(items) {
-									var total = items.length;
-									showItemsAcquired(items, function() {
-										if(total != null && total > 0) {
-											var show = true;
-										} else {
+							catchPokemon({pokemon_list: pokemon_to_catch}, function(options) {
+								addPokemonToFavorites(options, function() {
+									checkForts(forts, function(options) {
+										var total = options.items.length;
+										showItemsAcquired(options.items, function() {
 											var show = false;
-										}
-										showInventory({wait: call_wait, show: show, stats: true, trash: doTrash}, function() {
-											// maybe do something
+											if(total != null && total > 0) {
+												show = true;
+											}
+
+											var stats = false;
+											if(options.xp_earned != null && options.xp_earned > 0) {
+												stats = true;
+											}
+											showInventory({wait: call_wait, show: show, stats: stats, trash: doTrash}, function() {
+												// maybe do something
+											});
 										});
 									});
 								});
@@ -434,8 +439,7 @@ function runLocationChecks(wait) {
 function showItemsAcquired(items, callback) {
 	if(items.length > 0) {
 		var item = items.pop();
-		var id = item.item_id;
-		var info = getItemInfo(id);
+		var info = pokeAPI.getItemInfo(item);
 		var name = info.name;
 		var count = item.item_count;
 
@@ -452,27 +456,26 @@ function showItemsAcquired(items, callback) {
  * @param pokemon_list
  * @param callback
  */
-// TODO: upon catch, evaluate pokemon - favorite perfect ones
-function catchPokemon(pokemon_list, callback) {
+function catchPokemon(options, callback) {
 	if(doCatch) {
-		if(pokemon_list.length > 0) {
-			var pokemon = pokemon_list.pop();
+		if(options.pokemon_list.length > 0) {
+			var pokemon = options.pokemon_list.pop();
 			getPokeballCounts(function(counts) {
 				if(counts[0] > 0) {
-					var pokedexInfo = pokeAPI.pokemonlist[parseInt(pokemon.PokedexTypeId) - 1];
-					myLog.chat('There is a ' + pokedexInfo.name + ' near!! I can try to catch it!');
-
-					pokeAPI.EncounterPokemon(pokemon, function(err, dat) {
-						if(err) {
-							myLog.warning('Unable to encounter pokemon ' + pokedexInfo.name + " (" + err + ")");
+					var pokemon_info = pokeAPI.getPokemonInfo(pokemon);
+					pokeAPI.EncounterPokemon(pokemon, function(encounter_err, encounter_res) {
+						if(encounter_err) {
+							myLog.warning('Unable to encounter pokemon ' + pokemon_info.name + " (" + encounter_err + ")");
 							setTimeout(function() {
-								catchPokemon(pokemon_list, callback);
+								catchPokemon(options, callback);
 							}, call_wait);
 						} else {
-							if(dat.EncounterStatus !== undefined) {
-								var encounter_status = dat.EncounterStatus;
-								if(encounter_status == 1 && dat.WildPokemon !== undefined && dat.WildPokemon != null) {
-									myLog.chat('Encountered pokemon ' + pokedexInfo.name + '...');
+							if(encounter_res.status !== undefined) {
+								var encounter_status = encounter_res.status;
+								if(encounter_status == 1 && encounter_res.wild_pokemon !== undefined && encounter_res.wild_pokemon != null) {
+									var wildPoke = encounter_res.wild_pokemon.pokemon_data;
+									var wildPokeScore = wildPoke.individual_attack + wildPoke.individual_defense + wildPoke.individual_stamina;
+									myLog.chat('Encountered pokemon ' + pokemon_info.name + '...');
 									getBallToUse(counts, function(pokeball_id) {
 										if(pokeball_id != null) {
 											var hitPosition = 1;
@@ -485,96 +488,90 @@ function catchPokemon(pokemon_list, callback) {
 											max = 100;
 											var spinModifier = rand(min, max) / 100;
 											myLog.chat("\t\t#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
-											pokeAPI.CatchPokemon(pokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(xerr, xdat) {
-												console.log(xdat);
-												if(xerr !== undefined && xerr != "No result") {
-													myLog.warning("Unable to catch " + pokedexInfo.name + "; ERROR: " + xerr);
+											pokeAPI.CatchPokemon(pokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(catch_err, catch_res) {
+												if(catch_err && catch_err != "No result") {
+													myLog.warning("Unable to catch " + pokemon_info.name + "; ERROR: " + catch_err);
 													setTimeout(function() {
-														catchPokemon(pokemon_list, callback);
+														catchPokemon(options, callback);
 													}, call_wait);
 												} else {
-													if(xdat !== undefined && xdat.Status !== undefined) {
-														var status = xdat.Status;
-														if(statuses.catch[status] !== undefined) {
-															var status_str = statuses.catch[status];
-															if(status == 1) {
-																myLog.success(status_str + " " + pokedexInfo.name);
-															} else {
-																myLog.warning(status_str + " " + pokedexInfo.name);
-																if(status == 0 || status == 2) {
-																	// add back to the list and try again
-																	pokemon_list.push(pokemon);
-																}
+													if(catch_res !== undefined && catch_res.status !== undefined) {
+														var status = catch_res.status;
+														var status_str = pokeAPI.getCatchStatus(status);
+														if(status == 1) {
+															myLog.success(status_str + " " + pokemon_info.name);
+															if(wildPokeScore == perfect_score) {
+																queuePokemonToFavorite(options, {id: catch_res.captured_pokemon_id, pokemon_id: wildPoke.pokemon_id});
 															}
-															setTimeout(function() {
-																catchPokemon(pokemon_list, callback);
-															}, call_wait);
 														} else {
-															myLog.warning("Unable to catch " + pokedexInfo.name + "; status not accounted for (" + xdat + ")");
-															setTimeout(function() {
-																catchPokemon(pokemon_list, callback);
-															}, call_wait);
+															myLog.warning(status_str + " " + pokemon_info.name);
+															if(status == 0 || status == 2) {
+																// add back to the list and try again
+																options.pokemon_list.push(pokemon);
+															}
 														}
-													} else {
-														myLog.warning("Unable to catch " + pokedexInfo.name + "; status not defined (" + xdat + ")");
+														if(catch_res.capture_award !== undefined && catch_res.capture_award != null) {
+															myLog.success("\t" + sumArray(catch_res.capture_award.xp) + " XP awarded");
+															myLog.success("\t" + sumArray(catch_res.capture_award.candy) + " Candy awarded");
+															myLog.success("\t" + sumArray(catch_res.capture_award.stardust) + " Stardust awarded");
+														}
 														setTimeout(function() {
-															catchPokemon(pokemon_list, callback);
+															catchPokemon(options, callback);
+														}, call_wait);
+													} else {
+														myLog.warning("Unable to catch " + pokemon_info.name + "; status not defined (" + catch_res + ")");
+														setTimeout(function() {
+															catchPokemon(options, callback);
 														}, call_wait);
 													}
 												}
 											});
 										} else {
-											callback(true);
+											callback(options);
 										}
 									});
 								} else {
-									var encounter_status_string;
-									if(statuses.encounter[encounter_status] !== undefined) {
-										encounter_status_string = statuses.encounter[encounter_status];
-									} else {
-										encounter_status_string = encounter_status;
-									}
-									myLog.warning('There was a problem when trying to encounter pokemon ' + pokedexInfo.name + " (" + encounter_status_string + ")");
+									myLog.warning('There was a problem when trying to encounter pokemon ' + pokemon_info.name + " (" + pokeAPI.getEncounterStatus(encounter_status) + ")");
 									// if pokemon inventory is full
 									if(encounter_status == 7) {
 										scrapPokemon({wait: retry_wait, scrap: doScrap}, function(scrapped) {
 											if(scrapped) {
-												pokemon_list.push(pokemon);
+												options.pokemon_list.push(pokemon);
 												setTimeout(function() {
-													catchPokemon(pokemon_list, callback);
+													catchPokemon(options, callback);
 												}, call_wait);
 											} else {
 												myLog.info("Cannot catch - unable to scrap");
-												callback(true);
+												callback(options);
 											}
 										});
 									} else {
-										console.log(dat);
+										console.log(encounter_res);
 										setTimeout(function() {
-											catchPokemon(pokemon_list, callback);
+											catchPokemon(options, callback);
 										}, call_wait);
 									}
 								}
 							} else {
-								myLog.warning('EncounterStatus is undefined when trying to encounter pokemon ' + pokedexInfo.name);
-								console.log(dat);
+								myLog.warning('EncounterStatus is undefined when trying to encounter pokemon ' + pokemon_info.name);
+								console.log(encounter_res);
 								setTimeout(function() {
-									catchPokemon(pokemon_list, callback);
+									catchPokemon(options, callback);
 								}, call_wait);
 							}
 						}
 					});
 				} else {
 					myLog.warning("Out of Poke Balls :(");
-					callback(true);
+					callback(options);
 				}
 			});
 		} else {
-			callback(true);
+			callback(options);
 		}
 	} else {
 		myLog.info("Not catching - doCatch flag is set to false");
-		callback(true);
+		callback(options);
 	}
 }
 
@@ -615,21 +612,25 @@ function showInventory(options, callback) {
 				if(err) {
 					myLog.error("From showInventory->pokeAPI.GetInventory:");
 					myLog.error(err);
-					myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
+					fail_count++;
+					if(fail_count > 10) {
+						process.exit();
+					}
+					myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries; fail_count: " + fail_count);
 					showInventory(options, callback);
 				} else {
+					fail_count = 0;
 					var items_to_trash = [];
 					var total = 0;
 					//console.log(util.inspect(data, {showHidden: false, depth: null}))
-					for(var i in data.inventory_delta.inventory_items) {
-						var entry = data.inventory_delta.inventory_items[i].inventory_item_data;
+					for(var i in data) {
+						var entry = data[i].inventory_item_data;
 						if(entry.player_stats !== null) {
 							player_stats = entry.player_stats;
 						}
 						if(entry.item != null) {
 							var item = entry.item;
-							var itemID = item.item_id;
-							var itemInfo = getItemInfo(itemID);
+							var itemInfo = pokeAPI.getItemInfo(item);
 							var itemName = itemInfo.name;
 							var itemCount = item.count;
 							if(itemCount != null && itemName != "Incubator (Unlimited)") {
@@ -640,7 +641,7 @@ function showInventory(options, callback) {
 							}
 
 							if(trash_items != null && trash_items.indexOf(itemName) > -1 && itemCount != null) {
-								items_to_trash.push({id: itemID, count: itemCount});
+								items_to_trash.push({item_id: item.item_id, count: itemCount});
 							}
 						}
 					}
@@ -668,34 +669,34 @@ function showInventory(options, callback) {
 
 function showPlayerStats() {
 	/*{ level: 21,
-		experience: Long { low: 292764, high: 0, unsigned: false },
-		prev_level_xp: Long { low: 210000, high: 0, unsigned: false },
-		next_level_xp: Long { low: 335000, high: 0, unsigned: false },
-		km_walked: 104.00293731689453,
-			pokemons_encountered: 992,
-		unique_pokedex_entries: 78,
-		pokemons_captured: 870,
-		evolutions: 47,
-		poke_stop_visits: 1019,
-		pokeballs_thrown: 1901,
-		eggs_hatched: 41,
-		big_magikarp_caught: 6,
-		battle_attack_won: 78,
-		battle_attack_total: 87,
-		battle_defended_won: null,
-		battle_training_won: 56,
-		battle_training_total: 73,
-		prestige_raised_total: 7534,
-		prestige_dropped_total: 61500,
-		pokemon_deployed: 41,
-		pokemon_caught_by_type:
-		{ buffer: <Buffer 08 01 10 80 80 80 80 b0 83 92 b2 14 32 06 08 06 12 02 08 01 a2 06 b0 b0 01 08 01 12 aa b0 01 10 cd f0 bf 8b f3 2a 1a 4b 1a 49 0a 47 09 45 6e 74 18 de ... >,
-			offset: 19832,
-			markedOffset: -1,
-			limit: 19853,
-			littleEndian: true,
-			noAssert: false },
-		small_rattata_caught: 10 }*/
+	 experience: Long { low: 292764, high: 0, unsigned: false },
+	 prev_level_xp: Long { low: 210000, high: 0, unsigned: false },
+	 next_level_xp: Long { low: 335000, high: 0, unsigned: false },
+	 km_walked: 104.00293731689453,
+	 pokemons_encountered: 992,
+	 unique_pokedex_entries: 78,
+	 pokemons_captured: 870,
+	 evolutions: 47,
+	 poke_stop_visits: 1019,
+	 pokeballs_thrown: 1901,
+	 eggs_hatched: 41,
+	 big_magikarp_caught: 6,
+	 battle_attack_won: 78,
+	 battle_attack_total: 87,
+	 battle_defended_won: null,
+	 battle_training_won: 56,
+	 battle_training_total: 73,
+	 prestige_raised_total: 7534,
+	 prestige_dropped_total: 61500,
+	 pokemon_deployed: 41,
+	 pokemon_caught_by_type:
+	 { buffer: <Buffer 08 01 10 80 80 80 80 b0 83 92 b2 14 32 06 08 06 12 02 08 01 a2 06 b0 b0 01 08 01 12 aa b0 01 10 cd f0 bf 8b f3 2a 1a 4b 1a 49 0a 47 09 45 6e 74 18 de ... >,
+	 offset: 19832,
+	 markedOffset: -1,
+	 limit: 19853,
+	 littleEndian: true,
+	 noAssert: false },
+	 small_rattata_caught: 10 }*/
 	myLog.info("\tLevel: " + player_stats.level);
 	myLog.info("\tExperience: " + player_stats.experience);
 	myLog.info("\tNext Level: " + player_stats.next_level_xp);
@@ -710,9 +711,8 @@ function showPlayerStats() {
 function trashItems(items, callback) {
 	if(items.length > 0) {
 		var item = items.pop();
-		pokeAPI.DropItem(item.id, item.count, function(err, dat) {
-			var itemInfo = getItemInfo(item.id);
-			var itemName = itemInfo.name;
+		pokeAPI.DropItem(item.item_id, item.count, function(err, dat) {
+			var itemName = pokeAPI.getItemInfo(item).name;
 			if(err) {
 				myLog.error(err);
 			} else {
@@ -725,11 +725,7 @@ function trashItems(items, callback) {
 						}
 						myLog.info(count + " " + itemName + "s left");
 					} else {
-						var status = dat.result;
-						if(statuses.recycle[dat.result] !== undefined) {
-							status = statuses.recycle[dat.result];
-						}
-						myLog.warning("There was a problem trashing " + itemName + "s: " + status);
+						myLog.warning("There was a problem trashing " + itemName + "s: " + pokeAPI.getRecycleItemResult(data.result));
 					}
 
 				} else {
@@ -757,10 +753,15 @@ function getPokemon(options, callback) {
 				if(err) {
 					myLog.error("From getPokemon->pokeAPI.GetInventory:");
 					myLog.error(err);
-					myLog.error("Wait " + (options.wait / 1000) + " seconds between retries");
+					fail_count++;
+					if(fail_count > 10) {
+						process.exit();
+					}
+					myLog.error("Wait " + (options.wait / 1000) + " seconds between retries; fail_count: " + fail_count);
 					getPokemon(options, callback);
 				} else {
-					options.inventory = data.inventory_delta.inventory_items;
+					fail_count = 0;
+					options.inventory = data;
 					getPokemon(options, callback);
 				}
 			});
@@ -772,11 +773,11 @@ function getPokemon(options, callback) {
 		if(options.inventory.length > 0) {
 			var entry = options.inventory.pop().inventory_item_data;
 
-			if(entry.pokemon != null) {
-				var pokemon = entry.pokemon;
-				if(pokemon.is_egg == null) {
+			if(entry.pokemon_data != null) {
+				var pokemon = entry.pokemon_data;
+				if(!pokemon.is_egg) {
 					var pokemonId = parseInt(pokemon.pokemon_id);
-					var pokemonInfo = pokeAPI.pokemonlist[pokemonId - 1];
+					var pokemonInfo = pokeAPI.getPokemonInfo(pokemon);
 					pokemon.info = pokemonInfo;
 					if(options.grouped !== undefined && options.grouped) {
 						if(options.pokemon_list[pokemonId] === undefined) {
@@ -823,7 +824,6 @@ function getPokemon(options, callback) {
  * @param options
  * @param callback
  */
-// TODO: favorite perfect pokemon that are not already favorite
 function showPokemon(options, callback) {
 	if(options.show) {
 		if(options.pokemon_list === undefined) {
@@ -838,21 +838,15 @@ function showPokemon(options, callback) {
 			if(options.pokemon_list.length > 0) {
 				options.total++;
 				var pokemon = options.pokemon_list.pop();
-				/*pokeAPI.FavoritePokemon(pokemon.id, true, function() {
-					console.log("WOW, it worked...");
-				});*/
 				var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
-				var info_str = formatString(pokemon.info.name, (pokemon_name_max_len + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + "SCORE: " + formatString(score, 3) + "/" + formatString(perfect_score, 5);
+				var info_str = formatString(pokemon.info.name, (pokeAPI.getMaxPokemonNameLength() + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + "SCORE: " + formatString(score, 3) + "/" + formatString(perfect_score, 5);
 				if(score == perfect_score) {
 					if(pokemon.favorite) {
 						myLog.success("############### PERFECT & FAVORITE ###################");
 					} else {
 						myLog.success("############### PERFECT ###################");
 						// add to favorites if not already
-						if(options.add_to_favorites === undefined || options.add_to_favorites == null) {
-							options.add_to_favorites = [];
-						}
-						options.add_to_favorites.push(pokemon);
+						queuePokemonToFavorite(options, pokemon);
 					}
 					myLog.success(info_str);
 				} else if(pokemon.favorite) {
@@ -874,8 +868,18 @@ function showPokemon(options, callback) {
 	}
 }
 
+function queuePokemonToFavorite(options, pokemon) {
+	if(options.add_to_favorites === undefined || options.add_to_favorites == null) {
+		options.add_to_favorites = [];
+	}
+	if(pokemon.info === undefined || pokemon.info == null) {
+		pokemon.info = pokeAPI.pokemonlist[pokemon.pokemon_id - 1];
+	}
+	options.add_to_favorites.push(pokemon);
+}
+
 function addPokemonToFavorites(options, callback) {
-	if(options.add_to_favorites !== undefined && options.add_to_favorites != null && options.add_to_favorites.length) {
+	if(options.add_to_favorites !== undefined && options.add_to_favorites != null && options.add_to_favorites.length > 0) {
 		var pokemon = options.add_to_favorites.pop();
 		pokeAPI.SetFavoritePokemon(pokemon.id, true, function(err, data) {
 			if(err) {
@@ -1026,25 +1030,29 @@ function getPokeballCounts(callback) {
 		if(err) {
 			myLog.error("From getPokeballCounts->pokeAPI.GetInventory:");
 			myLog.error(err);
-			myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
+			fail_count++;
+			if(fail_count > 10) {
+				process.exit();
+			}
+			myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries; fail_count: " + fail_count);
 			// wait between tries
 			setTimeout(function() {
 				getPokeballCounts(callback);
 			}, retry_wait);
 			return;
+		} else {
+			fail_count = 0;
 		}
-		for(var i in data.inventory_delta.inventory_items) {
-			var entry = data.inventory_delta.inventory_items[i].inventory_item_data;
+		for(var i in data) {
+			var entry = data[i].inventory_item_data;
 			if(entry.item != null) {
 				var item = entry.item;
-				var itemID = item.item_id;
-				var itemInfo = getItemInfo(itemID);
-				var itemName = itemInfo.name;
+				var itemName = pokeAPI.getItemInfo(item).name;
 				var itemCount = item.count;
-				if(itemName.indexOf("ball") >= 0) {
+				if(itemName.indexOf("Ball") >= 0) {
 					myLog.info(itemCount + " " + itemName + "s");
 					pokeballs[0] += itemCount;
-					pokeballs[itemID] = itemCount;
+					pokeballs[item.item_id] = itemCount;
 				}
 			}
 		}
@@ -1068,7 +1076,7 @@ function checkForts(fortCells, callback) {
 	options.cellsNearby = fortCells;
 	getPokeStopsNearby(options, function() {
 		getPokeStops(options, function() {
-			callback(options.items);
+			callback(options);
 		});
 	});
 }
@@ -1083,21 +1091,30 @@ function getPokeStops(options, callback) {
 	if(options.items === undefined) {
 		options.items = [];
 	}
+	if(options.xp_earned === undefined || options.xp_earned === null) {
+		options.xp_earned = 0;
+	}
 	if(options.pokeStops.length > 0) {
 		var fort = options.pokeStops.pop();
 		myLog.chat("=== APPROACHING POKESTOP ===");
-		pokeAPI.GetFort(fort.FortId, fort.Latitude, fort.Longitude, function(err, data) {
+		pokeAPI.GetFort(fort.id, fort.latitude, fort.longitude, function(err, data) {
 			if(err) {
-				myLog.error("From checkForts->pokeAPI.GetFort:");
+				myLog.error("From getPokeStops->pokeAPI.GetFort:");
 				myLog.error(err);
+				fail_count++;
+				if(fail_count > 10) {
+					process.exit();
+				}
 				options.pokeStops.push(fort);
-				myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
+				myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries; fail_count: " + fail_count);
 				setTimeout(function() {
 					getPokeStops(options, callback);
 				}, retry_wait);
 			} else {
+				fail_count = 0;
 				if(data != undefined) {
-					if(data.experience_awarded !== undefined && data.experience_awarded !== null) {
+					if(data.experience_awarded !== undefined && data.experience_awarded !== null && data.experience_awarded > 0) {
+						options.xp_earned += data.experience_awarded;
 						myLog.success(data.experience_awarded + " XP earned");
 					}
 					if(data.items_awarded !== undefined && data.items_awarded.length > 0) {
@@ -1106,15 +1123,14 @@ function getPokeStops(options, callback) {
 							options.items.push(item);
 						}
 					} else if(data.result != 1) {
-						var reason = ["NO RESULT SET", "SUCCESS", "OUT OF RANGE", "IN COOLDOWN PERIOD", "INVENTORY FULL"];
-						myLog.warning(reason[data.result]);
+						myLog.warning(pokeAPI.getFortSearchResult(data.result));
 					}
 				}
 				getPokeStops(options, callback);
 			}
 		});
 	} else {
-		callback(true);
+		callback(options.xp_earned);
 	}
 }
 
@@ -1165,19 +1181,19 @@ function arePokeStopsNearby(options, callback) {
 	if(options.forts.length > 0) {
 		var fort = options.forts.pop();
 
-		var fortLocation = {'latitude': fort.Latitude, 'longitude': fort.Longitude};
+		var fortLocation = {'latitude': fort.latitude, 'longitude': fort.longitude};
 		var myPosition = {'latitude': location.coords.latitude, 'longitude': location.coords.longitude};
 		var distanceToFort = distance(myPosition, fortLocation);
 
 		//0.0248548 is the max distance we can be to go to a fort
-		//fort.FortType 1 is a pokestop - 0 is a gym
-		if(fort.FortType == 1) {
+		//fort.type 1 is a pokestop - 0 is a gym
+		if(fort.type == 1) {
 			// whithin 40 meters
 			if(distanceToFort < max_dist) {
 				options.pokeStops.push(fort);
-				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.FortType + ") is CLOSE ENOUGH (" + distanceToFort + ")");
+				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.type + ") is CLOSE ENOUGH (" + distanceToFort + ")");
 			} else {
-				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.FortType + ") is too far away (" + distanceToFort + ")");
+				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.type + ") is too far away (" + distanceToFort + ")");
 			}
 		}
 		arePokeStopsNearby(options, callback);
@@ -1193,8 +1209,8 @@ function arePokeStopsInView(options, callback) {
 	if(options.forts.length > 0) {
 		var fort = options.forts.pop();
 
-		//fort.FortType 1 is a pokestop - 0 is a gym
-		if(fort.FortType == 1) {
+		//fort.type 1 is a pokestop - 0 is a gym
+		if(fort.type == 1) {
 			pokestop_locations.push(fort);
 			options.pokeStops.push(fort);
 		}
@@ -1207,15 +1223,15 @@ function arePokeStopsInView(options, callback) {
 function getPath(options, callback) {
 	if(options.locations.length > 0) {
 		var location = options.locations.shift();
-		var point = new LatLon(location.Latitude, location.Longitude);
+		var point = new LatLon(location.latitude, location.longitude);
 		if(options.last_location === undefined || options.last_location == null) {
 			options.first_location = location;
 			options.last_location = location;
 			addToLocations(point, "Poke Stop");
 			getPath(options, callback);
 		} else {
-			var last_coords = {latitude: options.last_location.Latitude, longitude: options.last_location.Longitude};
-			var current_coords = {latitude: location.Latitude, longitude: location.Longitude};
+			var last_coords = {latitude: options.last_location.latitude, longitude: options.last_location.longitude};
+			var current_coords = {latitude: location.latitude, longitude: location.longitude};
 			var dist = distance(last_coords, current_coords);
 			if(dist > max_dist) {
 				//console.log("Too far between points - need to add points between (" + dist + ")");
@@ -1231,8 +1247,8 @@ function getPath(options, callback) {
 			getPath(options, callback);
 		}
 	} else {
-		var last_coords = {latitude: options.last_location.Latitude, longitude: options.last_location.Longitude};
-		var first_coords = {latitude: options.first_location.Latitude, longitude: options.first_location.Longitude};
+		var last_coords = {latitude: options.last_location.latitude, longitude: options.last_location.longitude};
+		var first_coords = {latitude: options.first_location.latitude, longitude: options.first_location.longitude};
 		var dist = distance(last_coords, first_coords);
 		if(dist > max_dist) {
 			getIntermediatePoints({
@@ -1366,80 +1382,24 @@ function rand(min, max) {
 	return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-/**
- * Get item info
- *
- * @param id
- * @returns {*}
- */
-function getItemInfo(id) {
-	if(id === undefined) {
-		throw "id not defined in getItemInfo";
-	}
-
-	for(var i in pokeAPI.itemlist) {
-		if(pokeAPI.itemlist[i].id == id) {
-			return pokeAPI.itemlist[i];
-		}
-	}
-}
-
-function buildVarsFromProto() {
-	if(statuses.encounter === undefined) {
-		statuses.encounter = {};
-	}
-	if(statuses.catch === undefined) {
-		statuses.catch = {};
-	}
-	if(statuses.recycle === undefined) {
-		statuses.recycle = {};
-	}
-	if(statuses.favorite === undefined) {
-		statuses.favorite = {};
-	}
-
-	var obj = pokeAPI.pokemonProto.ResponseEnvelop.EncounterResponse.Status;
-	for(i in obj) {
-		var str = i.replace(/_/g, " ").toLowerCase();
-		statuses.encounter[obj[i]] = str;
-	}
-
-	obj = pokeAPI.pokemonProto.ResponseEnvelop.CatchPokemonResponse.CatchStatus;
-	for(i in obj) {
-		var str = i.replace(/_/g, " ").toLowerCase();
-		statuses.catch[obj[i]] = str;
-	}
-
-	obj = pokeAPI.pokemonProto.ResponseEnvelop.RecycleInventoryItemResponse.Result;
-	for(i in obj) {
-		var str = i.replace(/_/g, " ").toLowerCase();
-		statuses.recycle[obj[i]] = str;
-	}
-
-	obj = pokeAPI.pokemonProto.ResponseEnvelop.SetFavoritePokemonResponse.FavoriteResult;
-	for(i in obj) {
-		var str = i.replace(/_/g, " ").toLowerCase();
-		statuses.favorite[obj[i]] = str;
-	}
-}
-
 function getFortsNearPoint(options, callback) {
 	setTimeout(function() {
-		pokeAPI.Heartbeat(function(err, hb) {
+		pokeAPI.Heartbeat(function(err, res) {
 			if(err) {
 				myLog.error("From runLocationChecks->pokeAPI.Heartbeat:");
 				myLog.error(err);
 				// TODO: retry?
 			} else {
-				if(hb != undefined && hb.cells != undefined) {
+				if(res.GET_MAP_OBJECTS !== undefined && res.GET_MAP_OBJECTS.map_cells !== undefined) {
+					var cells = res.GET_MAP_OBJECTS.map_cells;
 					options.cellsNearby = [];
-					for(var i = hb.cells.length - 1; i >= 0; i--) {
-						var cell = hb.cells[i];
-						options.cellsNearby.push(cell.Fort);
+					for( var i in cells) {
+						var cell = cells[i];
+						options.cellsNearby.push(cell.forts);
 					}
 
 					getPokeStopsInView(options, function() {
-						options.pokeStops.sort(dynamicSortMultiple("Latitude", "Longitude"));
+						options.pokeStops.sort(pokeAPI.dynamicSortMultiple("latitude", "longitude"));
 						callback(options.pokeStops);
 					});
 				}
@@ -1448,34 +1408,13 @@ function getFortsNearPoint(options, callback) {
 	}, options.wait);
 }
 
-function dynamicSort(property) {
-	var sortOrder = 1;
-	if(property[0] === "-") {
-		sortOrder = -1;
-		property = property.substr(1);
-	}
-	return function (a,b) {
-		var result = (a[property] < b[property]) ? -1 : (a[property] > b[property]) ? 1 : 0;
-		return result * sortOrder;
-	}
-}
-
-function dynamicSortMultiple() {
-	/*
-	 * save the arguments object as it will be overwritten
-	 * note that arguments object is an array-like object
-	 * consisting of the names of the properties to sort by
-	 */
-	var props = arguments;
-	return function (obj1, obj2) {
-		var i = 0, result = 0, numberOfProperties = props.length;
-		/* try getting a different result from 0 (equal)
-		 * as long as we have extra properties to compare
-		 */
-		while(result === 0 && i < numberOfProperties) {
-			result = dynamicSort(props[i])(obj1, obj2);
-			i++;
+function sumArray(arr) {
+	var total = 0;
+	if(arr.length > 0) {
+		for(i in arr) {
+			// TODO: check if numeric before adding
+			total += arr[i];
 		}
-		return result;
 	}
+	return total;
 }
