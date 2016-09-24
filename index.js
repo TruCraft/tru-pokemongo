@@ -640,7 +640,7 @@ function showInventory(options, callback) {
 								myLog.info(itemCount + "x " + itemName + "s");
 							}
 
-							if(trash_items != null && trash_items.indexOf(itemName) > -1 && itemCount != null) {
+							if(trash_items != null && trash_items.indexOf(itemName) > -1 && itemCount > 0) {
 								items_to_trash.push({item_id: item.item_id, count: itemCount});
 							}
 						}
