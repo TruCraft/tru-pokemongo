@@ -1110,7 +1110,7 @@ function getPokeStops(options, callback) {
 		var fort = options.pokeStops.pop();
 		var lure = false;
 		if(fort.lure_info !== undefined && fort.lure_info != null) {
-			lure = trure;
+			lure = true;
 			if(fort.lure_info.active_pokemon_id !== undefined && fort.lure_info.active_pokemon_id != null) {
 				if(options.lured_pokemon === undefined) {
 					options.lured_pokemon = [];
