@@ -399,22 +399,26 @@ function runLocationChecks(wait) {
 									}
 								}
 							}
-							myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
-							catchPokemon({pokemon_list: pokemon_to_catch}, function(options) {
-								addPokemonToFavorites(options, function() {
-									checkForts(forts, function(options) {
-										var total = options.items.length;
-										showItemsAcquired(options.items, function() {
-											var show = false;
-											if(total != null && total > 0) {
-												show = true;
-											}
 
-											var stats = false;
-											if(options.xp_earned != null && options.xp_earned > 0) {
-												stats = true;
-											}
-											showInventory({wait: call_wait, show: show, stats: stats, trash: doTrash}, function() {
+							checkForts(forts, function(options) {
+								if(options.lured_pokemon !== undefined && options.lured_pokemon.length > 0) {
+									pokemon_to_catch = pokemon_to_catch.concat(options.lured_pokemon);
+								}
+								var total = options.items.length;
+								showItemsAcquired(options.items, function() {
+									var show = false;
+									if(total != null && total > 0) {
+										show = true;
+									}
+
+									var stats = false;
+									if(options.xp_earned != null && options.xp_earned > 0) {
+										stats = true;
+									}
+									showInventory({wait: call_wait, show: show, stats: stats, trash: doTrash}, function() {
+										myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
+										catchPokemon({pokemon_list: pokemon_to_catch}, function(options) {
+											addPokemonToFavorites(options, function() {
 												// maybe do something
 											});
 										});
@@ -460,12 +464,20 @@ function catchPokemon(options, callback) {
 	if(doCatch) {
 		if(options.pokemon_list.length > 0) {
 			var pokemon = options.pokemon_list.pop();
+			var lured = false;
+			if(pokemon.fort_id !== undefined && pokemon.fort_id != null) {
+				lured = true;
+			}
 			getPokeballCounts(function(counts) {
 				if(counts[0] > 0) {
 					var pokemon_info = pokeAPI.getPokemonInfo(pokemon);
+					var pokemon_name = pokemon_info.name;
+					if(lured) {
+						pokemon_name = pokemon_name + " **lured**";
+					}
 					pokeAPI.EncounterPokemon(pokemon, function(encounter_err, encounter_res) {
 						if(encounter_err) {
-							myLog.warning('Unable to encounter pokemon ' + pokemon_info.name + " (" + encounter_err + ")");
+							myLog.warning("Unable to encounter pokemon " + pokemon_name + " (" + encounter_err + ")");
 							setTimeout(function() {
 								catchPokemon(options, callback);
 							}, call_wait);
@@ -487,10 +499,10 @@ function catchPokemon(options, callback) {
 											min = 85;
 											max = 100;
 											var spinModifier = rand(min, max) / 100;
-											myLog.chat("\t\t#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
+											myLog.chat("\t#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
 											pokeAPI.CatchPokemon(pokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(catch_err, catch_res) {
 												if(catch_err && catch_err != "No result") {
-													myLog.warning("Unable to catch " + pokemon_info.name + "; ERROR: " + catch_err);
+													myLog.warning("Unable to catch " + pokemon_name + "; ERROR: " + catch_err);
 													setTimeout(function() {
 														catchPokemon(options, callback);
 													}, call_wait);
@@ -499,12 +511,12 @@ function catchPokemon(options, callback) {
 														var status = catch_res.status;
 														var status_str = pokeAPI.getCatchStatus(status);
 														if(status == 1) {
-															myLog.success(status_str + " " + pokemon_info.name);
+															myLog.success(status_str + " " + pokemon_name);
 															if(wildPokeScore == perfect_score) {
 																queuePokemonToFavorite(options, {id: catch_res.captured_pokemon_id, pokemon_id: wildPoke.pokemon_id});
 															}
 														} else {
-															myLog.warning(status_str + " " + pokemon_info.name);
+															myLog.warning(status_str + " " + pokemon_name);
 															if(status == 0 || status == 2) {
 																// add back to the list and try again
 																options.pokemon_list.push(pokemon);
@@ -519,7 +531,7 @@ function catchPokemon(options, callback) {
 															catchPokemon(options, callback);
 														}, call_wait);
 													} else {
-														myLog.warning("Unable to catch " + pokemon_info.name + "; status not defined (" + catch_res + ")");
+														myLog.warning("Unable to catch " + pokemon_name + "; status not defined (" + catch_res + ")");
 														setTimeout(function() {
 															catchPokemon(options, callback);
 														}, call_wait);
@@ -531,7 +543,7 @@ function catchPokemon(options, callback) {
 										}
 									});
 								} else {
-									myLog.warning('There was a problem when trying to encounter pokemon ' + pokemon_info.name + " (" + pokeAPI.getEncounterStatus(encounter_status) + ")");
+									myLog.warning("There was a problem when trying to encounter pokemon " + pokemon_name + " (" + pokeAPI.getEncounterStatus(encounter_status) + ")");
 									// if pokemon inventory is full
 									if(encounter_status == 7) {
 										scrapPokemon({wait: retry_wait, scrap: doScrap}, function(scrapped) {
@@ -553,7 +565,7 @@ function catchPokemon(options, callback) {
 									}
 								}
 							} else {
-								myLog.warning('EncounterStatus is undefined when trying to encounter pokemon ' + pokemon_info.name);
+								myLog.warning("EncounterStatus is undefined when trying to encounter pokemon " + pokemon_name);
 								console.log(encounter_res);
 								setTimeout(function() {
 									catchPokemon(options, callback);
@@ -1096,7 +1108,23 @@ function getPokeStops(options, callback) {
 	}
 	if(options.pokeStops.length > 0) {
 		var fort = options.pokeStops.pop();
-		myLog.chat("=== APPROACHING POKESTOP ===");
+		var lure = false;
+		if(fort.lure_info !== undefined && fort.lure_info != null) {
+			lure = trure;
+			if(fort.lure_info.active_pokemon_id !== undefined && fort.lure_info.active_pokemon_id != null) {
+				if(options.lured_pokemon === undefined) {
+					options.lured_pokemon = [];
+				}
+				var pokemon = {
+					pokemon_id: fort.lure_info.active_pokemon_id,
+					encounter_id: fort.lure_info.encounter_id,
+					fort_id: fort.lure_info.fort_id
+				};
+				myLog.attention(pokeAPI.getPokemonInfo(fort.lure_info.active_pokemon_id).name + " has been lured");
+				options.lured_pokemon.push(pokemon);
+			}
+		}
+		myLog.chat("=== APPROACHING POKESTOP" + (lure ? " WITH LURE " : " ") + "===");
 		pokeAPI.GetFort(fort.id, fort.latitude, fort.longitude, function(err, data) {
 			if(err) {
 				myLog.error("From getPokeStops->pokeAPI.GetFort:");
@@ -1386,7 +1414,7 @@ function getFortsNearPoint(options, callback) {
 	setTimeout(function() {
 		pokeAPI.Heartbeat(function(err, res) {
 			if(err) {
-				myLog.error("From runLocationChecks->pokeAPI.Heartbeat:");
+				myLog.error("From getFortsNearPoint->pokeAPI.Heartbeat:");
 				myLog.error(err);
 				// TODO: retry?
 			} else {
