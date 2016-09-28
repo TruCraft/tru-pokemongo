@@ -481,7 +481,7 @@ function processHeartBeatResponses(res, callback) {
 			case "GET_BUDDY_WALKED":
 				if(result.success) {
 					if(result.candy_earned_count > 0) {
-						myLog.success("\t" + result.candy_earned_count + " " + pokeAPI.getPokemonFamilyName(result.family_candy_id) + " Candy earned");
+						myLog.success("\t" + result.candy_earned_count + " " + pokeAPI.getPokemonFamilyName(result.family_candy_id) + " Candy earned from walking");
 					}
 				}
 				break;
@@ -784,16 +784,16 @@ function catchPokemon(options, callback) {
 /**
  * Get the Poke ball to use
  *
- * @param pokemon_data
- * @param pokeball_counts
+ * @param encounter_result
  * @param callback
  */
 function getBallToUse(encounter_result, callback) {
+	var prob_perc = [];
 	if(encounter_result.capture_probability !== undefined && encounter_result.capture_probability !== null) {
 		var prob = encounter_result.capture_probability;
 		for(var i in prob.pokeball_type) {
-			var prob_perc = prob.capture_probability[i] * 100;
-			myLog.info("\tProbability for " + pokeAPI.getItemInfo({item_id: prob.pokeball_type[i]}).name + ": " + prob_perc + "%");
+			prob_perc[prob.pokeball_type[i]] = prob.capture_probability[i] * 100;
+			myLog.info("\tProbability for " + pokeAPI.getItemInfo({item_id: prob.pokeball_type[i]}).name + ": " + prob_perc[i] + "%");
 		}
 	}
 	var ball_to_use = null;
@@ -801,8 +801,12 @@ function getBallToUse(encounter_result, callback) {
 		if(ballIndex != 0) {
 			var ballInt = parseInt(ballIndex);
 			myLog.info("\t" + pokeball_counts[ballIndex] + " " + pokeAPI.getItemInfo({item_id: ballInt}).name + "s");
-			if(pokeball_counts[ballIndex] != null && pokeball_counts[ballIndex] > 0 && ball_to_use === null) {
-				ball_to_use = ballInt;
+			if(pokeball_counts[ballIndex] != null && pokeball_counts[ballIndex] > 0) {
+				if(ball_to_use === null) {
+					ball_to_use = ballInt;
+				} else if(prob_perc[ball_to_use] < 75) {
+					ball_to_use = ballInt;
+				}
 			}
 
 			if(ballInt >= (pokeball_counts.length - 1)) {
