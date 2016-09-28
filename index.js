@@ -555,7 +555,6 @@ function incubateEggs(callback) {
 				});
 			}, call_wait);
 		} else {
-			//myLog.info((incubator.target_km_walked - incubator.start_km_walked) + "km left to hatch egg");
 			incubateEggs(callback);
 		}
 	} else {
