@@ -194,6 +194,8 @@ var items_to_trash = [];
 var incubators = [];
 var eggs = [];
 
+var player_profile;
+
 var pokemon_list = [];
 var pokemon_grouped = [];
 var best_pokemon = {};
@@ -280,6 +282,7 @@ function getProfile(wait, callback) {
 					getProfile(wait, callback);
 				}, retry_wait);
 			} else {
+				player_profile = profile;
 				poke_storage = profile.max_pokemon_storage;
 				item_storage = profile.max_item_storage;
 				myLog.info('Username: ' + profile.username);
@@ -480,8 +483,13 @@ function processHeartBeatResponses(res, callback) {
 				if(result.success) {
 					if(result.pokemon_id.length > 0) {
 						for(var j in result.pokemon_id) {
-							var pokemon = {pokemon_id: result.pokemon_id[j]};
-							myLog.success("\t" + pokeAPI.getPokemonInfo(pokemon).name + " hatched");
+							getPokemonByPokemonId(result.pokemon_id[j], function(pokemon) {
+								if(pokemon !== null) {
+									myLog.success("\t" + pokeAPI.getPokemonInfo(pokemon).name + " hatched");
+								} else {
+									myLog.success("\tUnknown pokemon hatched (" + result.pokemon_id[j] + ")");
+								}
+							});
 						}
 						myLog.success("\t" + sumArray(result.experience_awarded) + " XP awarded");
 						myLog.success("\t" + sumArray(result.candy_awarded) + " Candy awarded");
@@ -519,15 +527,40 @@ function processHeartBeatResponses(res, callback) {
 					}
 				}
 				break;
+			case "COLLECT_DAILY_DEFENDER_BONUS":
+				if(result.result == 1) {
+					myLog.success("Collection successful");
+					if(result.currency_awarded.length > 0) {
+						for(var j in result.currency_awarded) {
+							myLog.success("\t" + result.currency_awarded[j] + " " + result.currency_type[j] + " awarded");
+						}
+					}
+				} else {
+					myLog.info("Unable to collect: " + pokeAPI.getCollectDailyDefenderBonusResult(result.result));
+				}
+				break;
 			case "DOWNLOAD_SETTINGS":
 				// not sure what to do with this... maybe nothing
 				break;
 			default:
-				myLog.warning(i + " result not yet implemented: " + res[i].toString());
+				myLog.warning(i + " result not yet implemented: " + JSON.stringify(res[i]));
 		}
 	}
 
 	callback(true);
+}
+
+function getPokemonByPokemonId(pokemon_id, callback) {
+	for(var i in pokemon_list) {
+		var pokemon = pokemon_list[i];
+		if(parseInt(pokemon.pokemon_id) == parseInt(pokemon_id)) {
+			callback(pokemon);
+		}
+
+		if(i >= (pokemon_list.length - 1)) {
+			callback(null);
+		}
+	}
 }
 
 /**
@@ -763,7 +796,7 @@ function catchPokemon(options, callback) {
 										min = 85;
 										max = 100;
 										var spinModifier = rand(min, max) / 100;
-										myLog.chat("\t#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
+										myLog.chat("#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
 										pokeAPI.CatchPokemon(pokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(catch_err, catch_res) {
 											if(catch_err && catch_err != "No result") {
 												myLog.warning("Unable to catch " + pokemon_name + "; ERROR: " + catch_err);
@@ -866,7 +899,7 @@ function getBallToUse(encounter_result, callback) {
 		var prob = encounter_result.capture_probability;
 		for(var i in prob.pokeball_type) {
 			prob_perc[prob.pokeball_type[i]] = prob.capture_probability[i] * 100;
-			myLog.info("\tProbability for " + pokeAPI.getItemInfo({item_id: prob.pokeball_type[i]}).name + ": " + prob_perc[i] + "%");
+			myLog.info("\tProbability for " + pokeAPI.getItemInfo({item_id: prob.pokeball_type[i]}).name + ": " + prob_perc[prob.pokeball_type[i]] + "%");
 		}
 	}
 	var ball_to_use = null;
@@ -1193,11 +1226,62 @@ function checkForts(fortCells, callback) {
 	var options = {};
 
 	options.cellsNearby = fortCells;
-	getPokeStopsNearby(options, function() {
+	getFortsNearby(options, function() {
 		getPokeStops(options, function() {
-			callback(options);
+			getGyms(options, function() {
+				callback(options);
+			});
 		});
 	});
+}
+
+function getGyms(options, callback) {
+	if(options.gyms !== undefined && options.gyms.length > 0) {
+		var gym = options.gyms.pop();
+		console.log(gym.owned_by_team, player_profile.team);
+		if(gym.owned_by_team == 0 || gym.owned_by_team == player_profile.team) {
+			getPokemonToDeploy(function(pokemon) {
+				myLog.chat("=== DEPLOYING TO GYM ===");
+				pokeAPI.FortDeployPokemon(gym, pokemon.id, function(err, res) {
+					if(err) {
+						myLog.error(err);
+					} else {
+						if(res !== undefined && res.result !== undefined) {
+							if(res.result == 1) {
+								myLog.success("Deployed " + pokemon.info.name + " pokemon to gym");
+							} else {
+								myLog.warning("Unable to deploy to gym: " + pokeAPI.getFortDeployPokemonResult(res.result));
+							}
+						} else {
+							myLog.warning(JSON.stringify(res));
+						}
+					}
+					setTimeout(function() {
+						getGyms(options, callback);
+					}, call_wait);
+				});
+			});
+		}
+	} else {
+		callback(true);
+	}
+}
+
+/**
+ *
+ * @param callback
+ */
+function getPokemonToDeploy(callback) {
+	for(var i in pokemon_list) {
+		var pokemon = pokemon_list[i];
+		if(pokemon.stamina == pokemon.stamina_max) {
+			return callback(pokemon);
+		}
+
+		if(i >= (pokemon_list.length - 1)) {
+			callback(null);
+		}
+	}
 }
 
 /**
@@ -1232,7 +1316,7 @@ function getPokeStops(options, callback) {
 			}
 		}
 		myLog.chat("=== APPROACHING POKESTOP" + (lure ? " WITH LURE " : " ") + "===");
-		pokeAPI.GetFort(fort.id, fort.latitude, fort.longitude, function(err, data) {
+		pokeAPI.GetFort(fort, function(err, data) {
 			if(err) {
 				myLog.error("From getPokeStops->pokeAPI.GetFort:");
 				myLog.error(err);
@@ -1277,14 +1361,14 @@ function getPokeStops(options, callback) {
  * @param options        should contain cellsNearby and pokeStops arrays
  * @param callback
  */
-function getPokeStopsNearby(options, callback) {
+function getFortsNearby(options, callback) {
 	if(options.pokeStops === undefined) {
 		options.pokeStops = [];
 	}
 	if(options.cellsNearby.length > 0) {
 		options.forts = options.cellsNearby.pop();
-		arePokeStopsNearby(options, function() {
-			getPokeStopsNearby(options, callback);
+		areFortsNearby(options, function() {
+			getFortsNearby(options, callback);
 		});
 	} else {
 		callback(true);
@@ -1297,9 +1381,12 @@ function getPokeStopsNearby(options, callback) {
  * @param options
  * @param callback
  */
-function arePokeStopsNearby(options, callback) {
+function areFortsNearby(options, callback) {
 	if(options.pokeStops === undefined) {
 		options.pokeStops = [];
+	}
+	if(options.gyms === undefined) {
+		options.gyms = [];
 	}
 	if(options.forts.length > 0) {
 		var fort = options.forts.pop();
@@ -1308,18 +1395,19 @@ function arePokeStopsNearby(options, callback) {
 		var myPosition = {'latitude': location.coords.latitude, 'longitude': location.coords.longitude};
 		var distanceToFort = distance(myPosition, fortLocation);
 
-		//0.0248548 is the max distance we can be to go to a fort
-		//fort.type 1 is a pokestop - 0 is a gym
-		if(fort.type == 1) {
-			// within 40 meters
-			if(distanceToFort < max_dist) {
+		// within 40 meters
+		if(distanceToFort < max_dist) {
+			//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.type + ") is CLOSE ENOUGH (" + distanceToFort + ")");
+			//fort.type 1 is a pokestop - 0 is a gym
+			if(fort.type == 1) {
 				options.pokeStops.push(fort);
-				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.type + ") is CLOSE ENOUGH (" + distanceToFort + ")");
 			} else {
-				//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.type + ") is too far away (" + distanceToFort + ")");
+				options.gyms.push(fort);
 			}
+		} else {
+			//myLog.attention(fortLocation.latitude + "," + fortLocation.longitude + " (" + fort.type + ") is too far away (" + distanceToFort + ")");
 		}
-		arePokeStopsNearby(options, callback);
+		areFortsNearby(options, callback);
 	} else {
 		callback(true);
 	}
