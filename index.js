@@ -283,45 +283,13 @@ function init() {
 }
 
 /**
- *
- * @param wait
- * @param callback
- */
-function getProfile(wait, callback) {
-	setTimeout(function() {
-		pokeAPI.GetProfile(function(err, profile) {
-			if(err) {
-				myLog.error("From main->pokeAPI.GetProfile:");
-				myLog.error(err);
-				myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries");
-				// wait between tries
-				setTimeout(function() {
-					getProfile(wait, callback);
-				}, retry_wait);
-			} else {
-				player_profile = profile;
-				poke_storage = profile.max_pokemon_storage;
-				item_storage = profile.max_item_storage;
-				myLog.info('Username: ' + profile.username);
-				myLog.info('Poke Storage: ' + poke_storage);
-				myLog.info('Item Storage: ' + item_storage);
-
-				myLog.info('Pokecoin: ' + profile.currencies[0].amount);
-				myLog.info('Stardust: ' + profile.currencies[1].amount);
-				callback(true);
-			}
-		});
-	}, wait);
-}
-
-/**
  * Main process
  */
 function main() {
 	myLog.info('Current location: ' + pokeAPI.playerInfo.locationName);
 	myLog.info('lat/long/alt: : ' + pokeAPI.playerInfo.latitude + ' ' + pokeAPI.playerInfo.longitude + ' ' + pokeAPI.playerInfo.altitude);
 
-	getProfile(call_wait, function() {
+	showProfile(function() {
 		showInventory({wait: retry_wait, show: doShowInventory, stats: true, trash: doTrash}, function() {
 			showPokemon(function() {
 				scrapPokemon(function() {
@@ -353,6 +321,23 @@ function main() {
 			});
 		});
 	});
+}
+
+/**
+ *
+ * @param callback
+ */
+function showProfile(callback) {
+	myLog.info("============ PLAYER PROFILE ============");
+	poke_storage = player_profile.max_pokemon_storage;
+	item_storage = player_profile.max_item_storage;
+	myLog.info('\tUsername: ' + player_profile.username);
+	myLog.info('\tPoke Storage: ' + poke_storage);
+	myLog.info('\tItem Storage: ' + item_storage);
+
+	myLog.info('\tPokecoin: ' + player_profile.currencies[0].amount);
+	myLog.info('\tStardust: ' + player_profile.currencies[1].amount);
+	callback(true);
 }
 
 /**
@@ -496,6 +481,11 @@ function processHeartBeatResponses(res, callback) {
 			case "GET_MAP_OBJECTS":
 				// implemented outside of this method
 				break;
+			case "GET_PLAYER":
+				if(result.success) {
+					player_profile = result.player_data;
+				}
+				break;
 			case "GET_HATCHED_EGGS":
 				if(result.success) {
 					if(result.pokemon_id.length > 0) {
@@ -619,7 +609,7 @@ function incubateEggs(callback) {
  */
 function processGetInventoryResponse(items, callback) {
 	if(doWriteInventory) {
-		fs.appendFile(inventory_file, JSON.stringify(items), function(err) {
+		fs.writeFile(inventory_file, JSON.stringify(items), function(err) {
 			if(err) {
 				myLog.error(err);
 			}
@@ -964,12 +954,13 @@ function showInventory(options, callback) {
 	if(options.show || options.trash || options.stats) {
 		var total = -1; // to account for the unlimited incubator
 		if(options.show) {
+			myLog.info("============ INVENTORY ============");
 			for(var i in inventory_items) {
 				var item = inventory_items[i];
 				var item_name = pokeAPI.getItemInfo(item).name;
 				var item_count = item.count;
 				total += item_count;
-				myLog.info(item_count + "x " + item_name + "s");
+				myLog.info("\t" + item_count + "x " + item_name + "s");
 			}
 			myLog.info("######### " + total + " / " + item_storage + " items #########");
 		}
@@ -1056,6 +1047,7 @@ function showPokemon(callback) {
 	if(doShowPokemon) {
 		var total = 0;
 		if(pokemon_list !== undefined && pokemon_list.length > 0) {
+			myLog.info("============ POKEMON ============");
 			for(var i in pokemon_list) {
 				total++;
 				var pokemon = pokemon_list[i];
