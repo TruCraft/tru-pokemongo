@@ -53,9 +53,14 @@ const optionDefinitions = [
 			}, {
 				name: 'write',
 				alias: 'w',
+				type: Boolean,
+				description: 'Write inventory to file in the ./inventory_files/{username}.json file'
+			}, {
+				name: 'file',
+				alias: 'f',
 				type: String,
 				typeLabel: '[underline]{filename}',
-				description: 'Coordinates file to be written to the ./coords/ directory'
+				description: 'Coordinates file to be written to the ./coord_files/ directory'
 			}, {
 				name: 'begin',
 				alias: 'b',
@@ -91,9 +96,10 @@ var doScrap = flags.scrap || false;
 var doTrash = flags.trash || false;
 var doShowInventory = flags.inventory || false;
 var doShowPokemon = flags.pokemon || false;
+var doWriteInventory = flags.write || false;
 
 var username = flags.username;
-var write_file = flags.write;
+var coords_filename = flags.file;
 
 if(username == null) {
 	showUsage("You must provide a username (-u)");
@@ -114,12 +120,10 @@ for(var i in pokeAPI.pokemonlist) {
 	}
 }
 
-// config files
-var configsDir = __dirname + "/configs";
-if(write_file !== undefined) {
-	if(write_file != null) {
+if(coords_filename !== undefined) {
+	if(coords_filename != null) {
 		var coordFilesDir = __dirname + "/coord_files/";
-		var coords_file = coordFilesDir + write_file;
+		var coords_file = coordFilesDir + coords_filename;
 		mkdirp(coordFilesDir, function(err) {
 			// path was created unless there was error
 			if(err) {
@@ -132,12 +136,25 @@ if(write_file !== undefined) {
 			});
 		});
 	} else {
-		showUsage("You must provide a filename with the write flag (-w)");
+		showUsage("You must provide a filename with the write flag (-f)");
 	}
 }
-var accountConfigFile = configsDir + "/" + username + ".json";
 
+// config files
+var configsDir = __dirname + "/configs";
+var accountConfigFile = configsDir + "/" + username + ".json";
 var account_config = [];
+
+if(doWriteInventory) {
+	var inventoryFilesDir = __dirname + "/inventory_files/";
+	var inventory_file = inventoryFilesDir + username + ".json";
+	mkdirp(inventoryFilesDir, function(err) {
+		// path was created unless there was error
+		if(err) {
+			throw "Unable to create inventory files dir: " + inventoryFilesDir;
+		}
+	});
+}
 
 // account config
 if(fs.existsSync(accountConfigFile)) {
@@ -178,8 +195,8 @@ var allow_scrap = account_config.allow_scrap || false;
 var trash_items = account_config.trash_items || null;
 
 var interval_obj;
-var interval_min = 5000;
-var interval_max = 15000;
+var interval_min = 10000;
+var interval_max = 20000;
 var interval;
 
 var retry_wait = 10000;
@@ -532,7 +549,7 @@ function processHeartBeatResponses(res, callback) {
 					myLog.success("Collection successful");
 					if(result.currency_awarded.length > 0) {
 						for(var j in result.currency_awarded) {
-							myLog.success("\t" + result.currency_awarded[j] + " " + result.currency_type[j] + " awarded");
+							myLog.success("\t" + result.currency_awarded[j] + " " + pokeAPI.formatString(result.currency_type[j]) + " awarded");
 						}
 					}
 				} else {
@@ -601,6 +618,13 @@ function incubateEggs(callback) {
  * @param callback
  */
 function processGetInventoryResponse(items, callback) {
+	if(doWriteInventory) {
+		fs.appendFile(inventory_file, JSON.stringify(items), function(err) {
+			if(err) {
+				myLog.error(err);
+			}
+		});
+	}
 	// reset arrays
 	pokeball_counts = [0];
 	inventory_items = [];
@@ -804,6 +828,8 @@ function catchPokemon(options, callback) {
 													catchPokemon(options, callback);
 												}, call_wait);
 											} else {
+												// decrement total and ball used
+												pokeball_counts[0]--;
 												pokeball_counts[pokeball_id]--;
 												if(catch_res !== undefined && catch_res.status !== undefined) {
 													var status = catch_res.status;
@@ -840,7 +866,10 @@ function catchPokemon(options, callback) {
 											}
 										});
 									} else {
-										callback(options);
+										myLog.warning("Unable to get ball to use: " + JSON.stringify(pokeball_counts));
+										setTimeout(function() {
+											catchPokemon(options, callback);
+										}, call_wait);
 									}
 								});
 							} else {
@@ -910,7 +939,7 @@ function getBallToUse(encounter_result, callback) {
 			if(pokeball_counts[ballIndex] != null && pokeball_counts[ballIndex] > 0) {
 				if(ball_to_use === null) {
 					ball_to_use = ballInt;
-				} else if(prob_perc[ball_to_use] < 75) {
+				} else if(prob_perc[ball_to_use] < 50) {
 					ball_to_use = ballInt;
 				}
 			}
@@ -1031,7 +1060,7 @@ function showPokemon(callback) {
 				total++;
 				var pokemon = pokemon_list[i];
 				var score = pokemon.individual_attack + pokemon.individual_defense + pokemon.individual_stamina;
-				var info_str = formatString(pokemon.info.name, (pokeAPI.getMaxPokemonNameLength() + 5)) + formatString("CP: " + pokemon.cp) + formatString("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatString("AT: " + pokemon.individual_attack) + formatString("DE: " + pokemon.individual_defense) + formatString("ST: " + pokemon.individual_stamina) + "SCORE: " + formatString(score, 3) + "/" + formatString(perfect_score, 5);
+				var info_str = formatStringLen(pokemon.info.name, (pokeAPI.getMaxPokemonNameLength() + 5)) + formatStringLen("CP: " + pokemon.cp) + formatStringLen("HP: " + pokemon.stamina + "/" + pokemon.stamina_max, 15) + formatStringLen("AT: " + pokemon.individual_attack) + formatStringLen("DE: " + pokemon.individual_defense) + formatStringLen("ST: " + pokemon.individual_stamina) + "SCORE: " + formatStringLen(score, 3) + "/" + formatStringLen(perfect_score, 5);
 				if(score == perfect_score) {
 					if(pokemon.favorite) {
 						myLog.success("############### PERFECT & FAVORITE ###################");
@@ -1175,7 +1204,7 @@ function getPokemonToScrap(callback) {
  * @param len
  * @returns {*}
  */
-function formatString(str, len) {
+function formatStringLen(str, len) {
 	if(len === undefined || len == null) {
 		len = 10;
 	}
