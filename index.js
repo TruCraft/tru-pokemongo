@@ -202,6 +202,8 @@ var interval;
 var retry_wait = 10000;
 var call_wait = 2500;
 
+var min_catch_probability = 30;
+
 var poke_storage = 0;
 var item_storage = 0;
 
@@ -212,6 +214,8 @@ var incubators = [];
 var eggs = [];
 
 var player_profile;
+
+var deploy_collect = false;
 
 var pokemon_list = [];
 var pokemon_grouped = [];
@@ -250,7 +254,14 @@ var closest_to_start = null;
 init();
 
 function init() {
-	pokeAPI.init(username, password, location, provider, function(err, responses) {
+	var init_options = {
+		username: username,
+		password: password,
+		location: location,
+		provider: provider,
+		collect: deploy_collect
+	};
+	pokeAPI.init(init_options, function(err, responses) {
 		if(err) {
 			myLog.error("From main:");
 			myLog.error(err);
@@ -393,7 +404,7 @@ function runLocationChecks(wait) {
 						myLog.add((total_distance / 1000) + " km traveled so far");
 					}
 				}
-				pokeAPI.Heartbeat(function(err, res) {
+				pokeAPI.Heartbeat({collect: deploy_collect}, function(err, res) {
 					if(err) {
 						myLog.error("From runLocationChecks->pokeAPI.Heartbeat:");
 						myLog.error(err);
@@ -484,6 +495,34 @@ function processHeartBeatResponses(res, callback) {
 			case "GET_PLAYER":
 				if(result.success) {
 					player_profile = result.player_data;
+					if(player_profile.daily_bonus !== undefined && player_profile.daily_bonus !== null) {
+						var now = new Date().getTime();
+						var diff = player_profile.daily_bonus.next_defender_bonus_collect_timestamp_ms - now;
+						var secs = Math.floor(diff / 1000);
+						var mins = Math.floor(secs / 60);
+						var hours = Math.floor(mins / 60);
+						var time_left;
+						if(hours > 0) {
+							var hour_mins = (hours * 60);
+							mins = mins - hour_mins;
+							if(mins > 0) {
+								var min_secs = (mins * 60);
+								secs = secs - (min_secs + (hour_mins * 60));
+							}
+							time_left = hours + " hours " + mins + " minutes " + secs + " seconds";
+						} else if(mins > 0) {
+							var min_secs = (mins * 60);
+							secs = secs - min_secs;
+							time_left = mins + " minutes " + secs + " seconds";
+						} else {
+							time_left = secs + " seconds";
+						}
+
+						myLog.info("[i] " + time_left + " til next collect");
+						if(player_profile.daily_bonus.next_defender_bonus_collect_timestamp_ms <= now) {
+							deploy_collect = true;
+						}
+					}
 				}
 				break;
 			case "GET_HATCHED_EGGS":
@@ -535,11 +574,12 @@ function processHeartBeatResponses(res, callback) {
 				}
 				break;
 			case "COLLECT_DAILY_DEFENDER_BONUS":
-				if(result.result == 1) {
+				if(result.result == 1 && deploy_collect) {
 					myLog.success("Collection successful");
 					if(result.currency_awarded.length > 0) {
 						for(var j in result.currency_awarded) {
 							myLog.success("\t" + result.currency_awarded[j] + " " + pokeAPI.formatString(result.currency_type[j]) + " awarded");
+							deploy_collect = false;
 						}
 					}
 				} else {
@@ -918,18 +958,17 @@ function getBallToUse(encounter_result, callback) {
 		var prob = encounter_result.capture_probability;
 		for(var i in prob.pokeball_type) {
 			prob_perc[prob.pokeball_type[i]] = prob.capture_probability[i] * 100;
-			myLog.info("\tProbability for " + pokeAPI.getItemInfo({item_id: prob.pokeball_type[i]}).name + ": " + prob_perc[prob.pokeball_type[i]] + "%");
 		}
 	}
 	var ball_to_use = null;
 	for(var ballIndex in pokeball_counts) {
 		if(ballIndex != 0) {
 			var ballInt = parseInt(ballIndex);
-			myLog.info("\t" + pokeball_counts[ballIndex] + " " + pokeAPI.getItemInfo({item_id: ballInt}).name + "s");
+			myLog.info("\t" + pokeball_counts[ballIndex] + " " + pokeAPI.getItemInfo({item_id: ballInt}).name + "s (catch probability: " + prob_perc[ballIndex].toFixed(2) + "%)");
 			if(pokeball_counts[ballIndex] != null && pokeball_counts[ballIndex] > 0) {
 				if(ball_to_use === null) {
 					ball_to_use = ballInt;
-				} else if(prob_perc[ball_to_use] < 50) {
+				} else if(prob_perc[ball_to_use] < min_catch_probability) {
 					ball_to_use = ballInt;
 				}
 			}
@@ -1257,9 +1296,8 @@ function checkForts(fortCells, callback) {
 }
 
 function getGyms(options, callback) {
-	if(options.gyms !== undefined && options.gyms.length > 0) {
+	if(options.gyms !== undefined && options.gyms.length > 0 && deploy_collect) {
 		var gym = options.gyms.pop();
-		console.log(gym.owned_by_team, player_profile.team);
 		if(gym.owned_by_team == 0 || gym.owned_by_team == player_profile.team) {
 			getPokemonToDeploy(function(pokemon) {
 				myLog.chat("=== DEPLOYING TO GYM ===");
