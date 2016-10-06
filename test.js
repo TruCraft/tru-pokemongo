@@ -2,6 +2,39 @@
 
 'use strict';
 
+var fs = require('fs');
+var Long = require('tru-pokemongo-api/node_modules/long');
+
+var testdata = fs.readFileSync(__dirname + "/jacobtrumanpokemon.json", 'utf8');
+var testjson = JSON.parse(testdata);
+
+for(var i in testjson) {
+	if(testjson[i].inventory_item_data.pokemon_data !== null) {
+		var id = testjson[i].inventory_item_data.pokemon_data.id;
+		var testlong = new Long(id.low, id.high, id.unsigned);
+		//console.log("low: " + id.low + " high: " + id.high + " = " + testlong.toString());
+		console.log(testlong.toString());
+	}
+}
+
+/*var pokemon = [];
+var eggs = [];
+var testdata = fs.readFileSync(__dirname + "/jacobtrumanpokemon.json", 'utf8');
+var testjson = JSON.parse(testdata);
+
+for(var i in testjson) {
+	if(testjson[i].inventory_item_data.pokemon_data !== null) {
+		if(!testjson[i].inventory_item_data.pokemon_data.is_egg) {
+			pokemon.push(testjson[i].inventory_item_data.pokemon_data);
+		} else {
+			eggs.push(testjson[i].inventory_item_data.pokemon_data);
+		}
+	}
+}
+console.log(eggs.length);
+console.log(pokemon.length);*/
+process.exit();
+
 const commandLineArgs = require('command-line-args');
 const getUsage = require('command-line-usage');
 //var LatLon = require('geodesy').LatLonEllipsoidal;
@@ -44,8 +77,6 @@ if(username == null) {
 	showUsage("You must provide a username (-u)");
 }
 
-var fs = require('fs');
-
 // config files
 var configsDir = __dirname + "/configs";
 var accountConfigFile = configsDir + "/" + username + ".json";
@@ -64,7 +95,7 @@ if(fs.existsSync(accountConfigFile)) {
 	throw Error("MISTAKE: configFile does not exist: " + accountConfigFile);
 }
 
-var fortsdata = fs.readFileSync(__dirname + "/testStops.json", 'utf8');
+var fortsdata = fs.readFileSync(__dirname + "/configs/testStops.json", 'utf8');
 var fortsjson = JSON.parse(fortsdata);
 
 fortsjson.unsorted.sort(dynamicSortMultiple("Latitude", "Longitude"));

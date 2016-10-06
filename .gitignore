@@ -1,5 +1,6 @@
 node_modules/
 configs/
+inventory_files/
 logs/
 .idea/
 npm-debug.log

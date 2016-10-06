@@ -212,6 +212,7 @@ var inventory_items = [];
 var items_to_trash = [];
 var incubators = [];
 var eggs = [];
+var hatched_pokemon = [];
 
 var player_profile;
 
@@ -224,9 +225,18 @@ var add_to_favorites = [];
 var pokemon_to_scrap = [];
 
 var break_loop = false;
-var restart_wait_min = 10;
-var restart_wait = (1000 * 60) * restart_wait_min;
+var stop_process = false;
+var take_break = false;
+var num_loop = 0;
+var num_loops = 1;
+
+var restart_wait_min = 30; // in minutes
+var restart_wait_max = 90; // in minutes
 var fail_count_restart = 0;
+
+var breaktime = null;
+var loop_time_min = 30; // in minutes
+var loop_time_max = 90; // in minutes
 
 var perfect_score = (15 + 15 + 15);
 
@@ -249,6 +259,7 @@ if(flags.begin !== undefined && flags.begin != null) {
 }
 var start_point = begin || account_config.start_point;
 var location = configCoords(start_point);
+var start_location_num = null;
 var closest_to_start = null;
 
 init();
@@ -276,10 +287,14 @@ function init() {
 				if(locations.length <= 0) {
 					if(responses.GET_MAP_OBJECTS !== undefined && responses.GET_MAP_OBJECTS.map_cells !== undefined) {
 						processGetMapObjectsResponse(responses.GET_MAP_OBJECTS, function() {
-							myLog.chat(forts_in_path.length + " Forts in this path");
-							getPath({locations: forts_in_path}, function() {
-								main();
-							});
+							if(forts_in_path.length > 0) {
+								myLog.chat(forts_in_path.length + " Forts in this path");
+								getPath({locations: forts_in_path}, function() {
+									main();
+								});
+							} else {
+								myLog.error("No forts found in path");
+							}
 						});
 					} else {
 						myLog.error("No locations found");
@@ -312,11 +327,7 @@ function main() {
 								pokeAPI = new PokemonGoAPI();
 								fail_count_restart++;
 								if(fail_count_restart > 10) {
-									fail_count_restart = 0;
-									myLog.chat("\t\t######### Process restarting in " + restart_wait_min + " minutes #########");
-									setTimeout(function() {
-										init();
-									}, restart_wait);
+									myLog.attention("Stopping process due to too many failures");
 									return;
 								} else {
 									myLog.error("Wait " + (retry_wait / 1000) + " seconds between retries; fail_count_restart: " + fail_count_restart);
@@ -325,6 +336,16 @@ function main() {
 									}, retry_wait);
 									return;
 								}
+							} else if(take_break) {
+								// reset take_break flag
+								take_break = false;
+								setTimeout(function() {
+									init();
+								}, getRestartWait());
+								return;
+							} else if(stop_process) {
+								myLog.attention("Stopping process");
+								return;
 							}
 						});
 					}
@@ -332,6 +353,21 @@ function main() {
 			});
 		});
 	});
+}
+
+/**
+ * Get randomized wait to restart time
+ *
+ * @returns {number}
+ */
+function getRestartWait() {
+	var min = (restart_wait_min * 60) * 1000;
+	var max = (restart_wait_max * 60) * 1000;
+	var restart_wait = rand(min, max);
+
+	myLog.chat("[*] ######### Process restarting in " + getTimeString(restart_wait) + " #########");
+
+	return restart_wait;
 }
 
 /**
@@ -357,7 +393,8 @@ function showProfile(callback) {
  * @param callback
  */
 function runLoop(callback) {
-	if(!break_loop) {
+	take_break = isBreakTime();
+	if(!break_loop && !stop_process && !take_break) {
 		runLocationChecks(call_wait);
 		interval = rand(interval_min, interval_max);
 		clearInterval(interval_obj);
@@ -370,12 +407,86 @@ function runLoop(callback) {
 }
 
 /**
+ * Check if it is time to take a break
+ *
+ * @returns {boolean}
+ */
+function isBreakTime() {
+	var now = new Date().getTime();
+	if(breaktime != null) {
+		var diff = breaktime - now;
+		if(diff > 0) {
+			myLog.chat("Next break in " + getTimeString(diff));
+		}
+		if(breaktime <= now) {
+			breaktime = getNewBreakTime(now);
+			myLog.chat("Next break in " + getTimeString(breaktime - now));
+			return true;
+		}
+	} else {
+		breaktime = getNewBreakTime(now);
+		myLog.chat("Next break in " + getTimeString(breaktime - now));
+	}
+	return false;
+}
+
+/**
+ * Get time in hours/mins/secs from a timestamp (ms)
+ *
+ * @param times_in_ms
+ * @returns {*}
+ */
+function getTimeString(times_in_ms) {
+	var time_string;
+	var secs = Math.floor(times_in_ms / 1000);
+	var mins = Math.floor(secs / 60);
+	var hours = Math.floor(mins / 60);
+	if(hours > 0) {
+		var hour_mins = (hours * 60);
+		mins = mins - hour_mins;
+		if(mins > 0) {
+			var min_secs = (mins * 60);
+			secs = secs - (min_secs + (hour_mins * 60));
+		}
+		time_string = hours + " hours " + mins + " minutes " + secs + " seconds";
+	} else if(mins > 0) {
+		var min_secs = (mins * 60);
+		secs = secs - min_secs;
+		time_string = mins + " minutes " + secs + " seconds";
+	} else {
+		time_string = secs + " seconds";
+	}
+
+	return time_string;
+}
+
+/**
+ * Get new time to take a break
+ *
+ * @param now	Timestamp from which to start
+ * @returns {*}
+ */
+function getNewBreakTime(now) {
+	var min = (loop_time_min * 60) * 1000;
+	var max = (loop_time_max * 60) * 1000;
+	return now + rand(min, max);
+}
+
+/**
  * Check locations for things nearby (Pokemon and Poke Stops)
  *
  * @param wait
  */
 function runLocationChecks(wait) {
 	setTimeout(function() {
+		// increment loops when back to starting point
+		if(current_location == start_location_num) {
+			num_loop++;
+			myLog.chat("+++++++ Starting loop " + num_loops + " of " + num_loops + " +++++++");
+			if(num_loop > num_loops) {
+				stop_process = true;
+			}
+		}
 		current_location++;
 		if(current_location >= locations.length) {
 			current_location = 0;
@@ -404,71 +515,75 @@ function runLocationChecks(wait) {
 						myLog.add((total_distance / 1000) + " km traveled so far");
 					}
 				}
-				pokeAPI.Heartbeat({collect: deploy_collect}, function(err, res) {
+				pokeAPI.Heartbeat(function(err, res) {
 					if(err) {
 						myLog.error("From runLocationChecks->pokeAPI.Heartbeat:");
 						myLog.error(err);
 						break_loop = true;
-						return;
 					} else {
 						processHeartBeatResponses(res, function() {
 							if(res.GET_MAP_OBJECTS !== undefined && res.GET_MAP_OBJECTS.map_cells !== undefined) {
 								var cells = res.GET_MAP_OBJECTS.map_cells;
-								var forts = [];
-								var pokemon_to_catch = [];
-								for(var i in cells) {
-									var cell = cells[i];
-									if(cell.forts.length > 0) {
-										forts.push(cell.forts);
-									}
-
-									if(cell.nearby_pokemons.length > 0) {
-										for(var i in cell.nearby_pokemons) {
-											myLog.warning("There is a " + pokeAPI.getPokemonInfo(cell.nearby_pokemons[i]).name + " near.");
+								if(cells.length > 0) {
+									var forts = [];
+									var pokemon_to_catch = [];
+									for(var cell_i in cells) {
+										var cell = cells[cell_i];
+										if(cell.forts.length > 0) {
+											forts.push(cell.forts);
 										}
-									}
 
-									// get list of catchable pokemon
-									if(cell.catchable_pokemons.length > 0) {
-										for(var i in cell.catchable_pokemons) {
-											myLog.attention(pokeAPI.getPokemonInfo(cell.catchable_pokemons[i]).name + " is close enough to catch");
-											if(pokemon_to_catch.indexOf(cell.catchable_pokemons[i]) < 0) {
-												pokemon_to_catch.push(cell.catchable_pokemons[i]);
+										if(cell.nearby_pokemons.length > 0) {
+											for(var near_i in cell.nearby_pokemons) {
+												myLog.warning("There is a " + pokeAPI.getPokemonInfo(cell.nearby_pokemons[near_i]).name + " near.");
+											}
+										}
+
+										// get list of catchable pokemon
+										if(cell.catchable_pokemons.length > 0) {
+											for(var catch_i in cell.catchable_pokemons) {
+												myLog.attention(pokeAPI.getPokemonInfo(cell.catchable_pokemons[catch_i]).name + " is close enough to catch");
+												if(pokemon_to_catch.indexOf(cell.catchable_pokemons[catch_i]) < 0) {
+													pokemon_to_catch.push(cell.catchable_pokemons[catch_i]);
+												}
 											}
 										}
 									}
-								}
 
-								checkForts(forts, function(options) {
-									if(options.lured_pokemon !== undefined && options.lured_pokemon.length > 0) {
-										pokemon_to_catch = pokemon_to_catch.concat(options.lured_pokemon);
-									}
-									var total = options.items.length;
-									showItemsAcquired(options.items, "Acquired", function() {
-										var show = false;
-										if(total != null && total > 0) {
-											show = true;
+									checkForts(forts, function(options) {
+										if(options.lured_pokemon !== undefined && options.lured_pokemon.length > 0) {
+											pokemon_to_catch = pokemon_to_catch.concat(options.lured_pokemon);
 										}
+										var total = options.items.length;
+										showItemsAcquired(options.items, "Acquired", function() {
+											var show = false;
+											if(total != null && total > 0) {
+												show = true;
+											}
 
-										var stats = false;
-										if(options.xp_earned != null && options.xp_earned > 0) {
-											stats = true;
-										}
-										showInventory({
-											wait: call_wait,
-											show: show,
-											stats: stats,
-											trash: doTrash
-										}, function() {
-											myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
-											catchPokemon({pokemon_list: pokemon_to_catch}, function() {
-												addPokemonToFavorites(function() {
-													// maybe do something
+											var stats = false;
+											if(options.xp_earned != null && options.xp_earned > 0) {
+												stats = true;
+											}
+											showInventory({
+												wait: call_wait,
+												show: show,
+												stats: stats,
+												trash: doTrash
+											}, function() {
+												myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
+												catchPokemon({pokemon_list: pokemon_to_catch}, function() {
+													addPokemonToFavorites(function() {
+														// maybe do something
+													});
 												});
 											});
 										});
 									});
-								});
+								} else {
+									myLog.error("No cells returned - something is wrong");
+									stop_process = true;
+								}
 							} else {
 								myLog.warning("No map cells found in this location");
 							}
@@ -498,28 +613,9 @@ function processHeartBeatResponses(res, callback) {
 					if(player_profile.daily_bonus !== undefined && player_profile.daily_bonus !== null) {
 						var now = new Date().getTime();
 						var diff = player_profile.daily_bonus.next_defender_bonus_collect_timestamp_ms - now;
-						var secs = Math.floor(diff / 1000);
-						var mins = Math.floor(secs / 60);
-						var hours = Math.floor(mins / 60);
-						var time_left;
-						if(hours > 0) {
-							var hour_mins = (hours * 60);
-							mins = mins - hour_mins;
-							if(mins > 0) {
-								var min_secs = (mins * 60);
-								secs = secs - (min_secs + (hour_mins * 60));
-							}
-							time_left = hours + " hours " + mins + " minutes " + secs + " seconds";
-						} else if(mins > 0) {
-							var min_secs = (mins * 60);
-							secs = secs - min_secs;
-							time_left = mins + " minutes " + secs + " seconds";
+						if(diff > 0) {
+							myLog.info("[i] " + getTimeString(diff) + " til next collect");
 						} else {
-							time_left = secs + " seconds";
-						}
-
-						myLog.info("[i] " + time_left + " til next collect");
-						if(player_profile.daily_bonus.next_defender_bonus_collect_timestamp_ms <= now) {
 							deploy_collect = true;
 						}
 					}
@@ -528,18 +624,21 @@ function processHeartBeatResponses(res, callback) {
 			case "GET_HATCHED_EGGS":
 				if(result.success) {
 					if(result.pokemon_id.length > 0) {
-						for(var j in result.pokemon_id) {
-							getPokemonByPokemonId(result.pokemon_id[j], function(pokemon) {
-								if(pokemon !== null) {
-									myLog.success("\t" + pokeAPI.getPokemonInfo(pokemon).name + " hatched");
-								} else {
-									myLog.success("\tUnknown pokemon hatched (" + result.pokemon_id[j] + ")");
-								}
-							});
-						}
-						myLog.success("\t" + sumArray(result.experience_awarded) + " XP awarded");
-						myLog.success("\t" + sumArray(result.candy_awarded) + " Candy awarded");
-						myLog.success("\t" + sumArray(result.stardust_awarded) + " Stardust awarded");
+						showPreviouslyHatchedEggs(function() {
+							for(var j in result.pokemon_id) {
+								getPokemonByPokemonId(result.pokemon_id[j], function(pokemon) {
+									if(pokemon !== null) {
+										myLog.success("\t" + pokeAPI.getPokemonInfo(pokemon).name + " hatched");
+									} else {
+										myLog.success("\tUnknown pokemon hatched (" + result.pokemon_id[j] + ")");
+										hatched_pokemon.push(result.pokemon_id[j]);
+									}
+								});
+							}
+							myLog.success("\t" + sumArray(result.experience_awarded) + " XP awarded");
+							myLog.success("\t" + sumArray(result.candy_awarded) + " Candy awarded");
+							myLog.success("\t" + sumArray(result.stardust_awarded) + " Stardust awarded");
+						});
 					}
 				}
 				break;
@@ -597,10 +696,28 @@ function processHeartBeatResponses(res, callback) {
 	callback(true);
 }
 
+function showPreviouslyHatchedEggs(callback) {
+	if(hatched_pokemon.length > 0) {
+		var pokemon_id = hatched_pokemon.pop();
+		myLog.chat("########### CHECKING PREVIOUSLY HATCHED EGG ############");
+		myLog.chat(pokemon_id.toString());
+		getPokemonByPokemonId(pokemon_id, function(pokemon) {
+			if(pokemon !== null) {
+				myLog.success("\tPreviously hatched pokemon " + pokeAPI.getPokemonInfo(pokemon).name + " (" + pokemon_id + ")");
+			} else {
+				myLog.success("\tPreviously hatched pokemon still unknown (" + pokemon_id + ")");
+			}
+			showPreviouslyHatchedEggs(callback);
+		});
+	} else {
+		callback(true);
+	}
+}
+
 function getPokemonByPokemonId(pokemon_id, callback) {
 	for(var i in pokemon_list) {
 		var pokemon = pokemon_list[i];
-		if(parseInt(pokemon.pokemon_id) == parseInt(pokemon_id)) {
+		if(pokemon.id.toString() == pokemon_id.toString()) {
 			callback(pokemon);
 		}
 
@@ -663,7 +780,6 @@ function processGetInventoryResponse(items, callback) {
 	incubators = [];
 	eggs = [];
 	for(var j in items) {
-
 		if(items[j].inventory_item_data !== undefined && items[j].inventory_item_data !== null) {
 			// items
 			var entry = items[j].inventory_item_data;
@@ -841,17 +957,12 @@ function catchPokemon(options, callback) {
 								myLog.chat("Encountered pokemon " + pokemon_name + " :: " + pokemon_stats_string + "...");
 								getBallToUse(encounter_res, function(pokeball_id) {
 									if(pokeball_id != null) {
-										var hitPosition = 1;
-										//var reticleSize = 1.950;
-										var min = 1850;
-										var max = 1950;
-										var reticleSize = rand(min, max) / 1000;
-										//var spinModifier = 1;
-										min = 85;
-										max = 100;
-										var spinModifier = rand(min, max) / 100;
-										myLog.chat("#### TRYING TO CATCH WITH POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
-										pokeAPI.CatchPokemon(pokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(catch_err, catch_res) {
+										var hitPokemon = getHitPokemon(5);
+										var hitPosition = getHitPosition();
+										var reticleSize = getReticleSize();
+										var spinModifier = getSpinModifier();
+										myLog.chat("#### Catch Params #### HIT: " + hitPokemon.toString() + " POS: " + hitPosition + " RET: " + reticleSize + " SPIN: " + spinModifier + " BALL: " + pokeball_id);
+										pokeAPI.CatchPokemon(pokemon, hitPokemon, hitPosition, reticleSize, spinModifier, pokeball_id, function(catch_err, catch_res) {
 											if(catch_err && catch_err != "No result") {
 												myLog.warning("Unable to catch " + pokemon_name + "; ERROR: " + catch_err);
 												setTimeout(function() {
@@ -944,6 +1055,59 @@ function catchPokemon(options, callback) {
 		myLog.info("Not catching - doCatch flag is set to false");
 		callback(options);
 	}
+}
+
+/**
+ * Randomize hitting pokemon - miss 1 in max times
+ *
+ * @returns {boolean}
+ */
+function getHitPokemon(max) {
+	var num = rand(1, max);
+	if(num == 1) {
+		return false;
+	} else {
+		return true;
+	}
+}
+
+/**
+ * Get hit position (1 in reticle, 0 not in reticle)
+ *
+ * @returns {number}
+ */
+function getHitPosition() {
+	//return 1;
+	return rand(0, 1);
+}
+
+/**
+ * Get randomized reticle size
+ *
+ * TODO: need to figure out range of values
+ * @returns {number}
+ */
+function getReticleSize() {
+	//return 1.950; // excellent
+	//var min = 1850;
+	//var max = 1950;
+
+	var min = 1050;
+	var max = 1950;
+	return rand(min, max) / 1000;
+}
+
+/**
+ * Get a randomized spin modifier
+ *
+ * @returns {number}
+ */
+function getSpinModifier() {
+	//var spinModifier = 1;
+	//var min = 85;
+	//var max = 100;
+	//return rand(min, max) / 100;
+	return rand(0, 1);
 }
 
 /**
@@ -1308,6 +1472,27 @@ function getGyms(options, callback) {
 						if(res !== undefined && res.result !== undefined) {
 							if(res.result == 1) {
 								myLog.success("Deployed " + pokemon.info.name + " pokemon to gym");
+								pokeAPI.CollectDailyDefenderBonus(function(err, res) {
+									if(err) {
+										myLog.error(err);
+									} else {
+										if(res !== undefined && res.result !== undefined) {
+											if(res.result == 1) {
+												myLog.success("Collection successful");
+												if(res.currency_awarded.length > 0) {
+													for(var j in res.currency_awarded) {
+														myLog.success("\t" + res.currency_awarded[j] + " " + pokeAPI.formatString(res.currency_type[j]) + " awarded");
+														deploy_collect = false;
+													}
+												}
+											} else {
+												myLog.info("Unable to collect: " + pokeAPI.getCollectDailyDefenderBonusResult(res.result));
+											}
+										} else {
+											myLog.warning(JSON.stringify(res));
+										}
+									}
+								});
 							} else {
 								myLog.warning("Unable to deploy to gym: " + pokeAPI.getFortDeployPokemonResult(res.result));
 							}
@@ -1516,6 +1701,7 @@ function getPath(options, callback) {
 				// do nothing
 			});
 		}
+		start_location_num = current_location;
 		callback(true);
 	}
 }
