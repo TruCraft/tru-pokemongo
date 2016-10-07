@@ -24,37 +24,37 @@ const optionDefinitions = [
 				name: 'loop',
 				alias: 'l',
 				type: Boolean,
-				description: 'Have the process loop'
+				description: 'Do not have the process loop'
 			}, {
 				name: 'catch',
 				alias: 'c',
 				type: Boolean,
-				description: 'Try to catch Pokemon; must be used with the loop (-l) flag'
+				description: 'Do not try to catch Pokemon; must be used with the loop (-l) flag'
 			}, {
 				name: 'scrap',
 				alias: 's',
 				type: Boolean,
-				description: 'Scrap duplicate Pokemon (must have the "allow_scrap" parameter in the user config file)'
+				description: 'Do not scrap duplicate Pokemon (must have the "allow_scrap" parameter in the user config file)'
 			}, {
 				name: 'trash',
 				alias: 't',
 				type: Boolean,
-				description: 'Trash items defined in user config file (trash_items parameter)'
+				description: 'Do not trash items defined in user config file (trash_items parameter)'
 			}, {
 				name: 'inventory',
 				alias: 'i',
 				type: Boolean,
-				description: 'Show inventory'
+				description: 'Do not show inventory'
 			}, {
 				name: 'pokemon',
 				alias: 'p',
 				type: Boolean,
-				description: 'Show Pokemon'
+				description: 'Do not show Pokemon'
 			}, {
 				name: 'write',
 				alias: 'w',
 				type: Boolean,
-				description: 'Write inventory to file in the ./inventory_files/{username}.json file'
+				description: 'Do not write inventory to file in the ./inventory_files/{username}.json file'
 			}, {
 				name: 'file',
 				alias: 'f',
@@ -90,13 +90,13 @@ function showUsage(msg) {
 
 var flags = commandLineArgs(optionDefinitions[1].optionList);
 
-var doLoop = flags.loop || false;
-var doCatch = flags.catch || false;
-var doScrap = flags.scrap || false;
-var doTrash = flags.trash || false;
-var doShowInventory = flags.inventory || false;
-var doShowPokemon = flags.pokemon || false;
-var doWriteInventory = flags.write || false;
+var doLoop = !flags.loop || true;
+var doCatch = !flags.catch || true;
+var doScrap = !flags.scrap || true;
+var doTrash = !flags.trash || true;
+var doShowInventory = !flags.inventory || true;
+var doShowPokemon = !flags.pokemon || true;
+var doWriteInventory = !flags.write || true;
 
 var username = flags.username;
 var coords_filename = flags.file;
@@ -424,8 +424,7 @@ function isBreakTime() {
 			myLog.chat("Next break in " + getTimeString(diff));
 		}
 		if(breaktime <= now) {
-			breaktime = getNewBreakTime(now);
-			myLog.chat("Next break in " + getTimeString(breaktime - now));
+			breaktime = null;
 			return true;
 		}
 	} else {
@@ -1097,7 +1096,6 @@ function getHitPosition() {
 /**
  * Get randomized reticle size
  *
- * TODO: need to figure out range of values
  * @returns {number}
  */
 function getReticleSize() {
