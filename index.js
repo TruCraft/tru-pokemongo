@@ -56,6 +56,11 @@ const optionDefinitions = [
 				type: Boolean,
 				description: 'Do not write inventory to file in the ./inventory_files/{username}.json file'
 			}, {
+				name: 'deploy',
+				alias: 'd',
+				type: Boolean,
+				description: 'Deploy to gyms and collect coins'
+			}, {
 				name: 'file',
 				alias: 'f',
 				type: String,
@@ -92,6 +97,7 @@ var flags = commandLineArgs(optionDefinitions[1].optionList);
 
 var doLoop = !flags.loop || true;
 var doCatch = !flags.catch || true;
+var doDeploy = flags.deploy || false;
 var doScrap = !flags.scrap || true;
 var doTrash = !flags.trash || true;
 var doShowInventory = !flags.inventory || true;
@@ -286,6 +292,7 @@ function init() {
 				return;
 			} else {
 				myLog.attention("Stopping process - failed to start/restart");
+				return;
 			}
 		} else {
 			processHeartBeatResponses(responses, function() {
@@ -1483,53 +1490,87 @@ function checkForts(fortCells, callback) {
  * @param callback
  */
 function getGyms(options, callback) {
-	callback(true);
-	return; // TODO don't deploy to gyms until I can figure out if there is room in the gym
-	if(options.gyms !== undefined && options.gyms.length > 0 && deploy_collect) {
-		var gym = options.gyms.pop();
-		if(gym.owned_by_team == 0 || gym.owned_by_team == player_profile.team) {
-			getPokemonToDeploy(function(pokemon) {
-				myLog.chat("=== DEPLOYING TO GYM ===");
-				pokeAPI.FortDeployPokemon(gym, pokemon.id, function(err, res) {
-					if(err) {
-						myLog.error(err);
+	if(doDeploy) {
+		if(options.gyms !== undefined && options.gyms.length > 0 && deploy_collect) {
+			var gym = options.gyms.pop();
+			if(gym.owned_by_team == 0 || gym.owned_by_team == player_profile.team) {
+				pokeAPI.getGymDetails(gym, function(gym_details_err, gym_details) {
+					if(gym_level_err) {
+						myLog.error(gym_level_err);
+						setTimeout(function() {
+							getGyms(options, callback);
+						}, call_wait);
 					} else {
-						if(res !== undefined && res.result !== undefined) {
-							if(res.result == 1) {
-								myLog.success("Deployed " + pokemon.info.name + " pokemon to gym");
-								pokeAPI.CollectDailyDefenderBonus(function(err, res) {
-									if(err) {
-										myLog.error(err);
-									} else {
-										if(res !== undefined && res.result !== undefined) {
-											if(res.result == 1) {
-												myLog.success("Collection successful");
-												if(res.currency_awarded.length > 0) {
-													for(var j in res.currency_awarded) {
-														myLog.success("\t" + res.currency_awarded[j] + " " + pokeAPI.formatString(res.currency_type[j]) + " awarded");
-														deploy_collect = false;
+						if(gym_details.memberships !== undefined && gym_details.memberships !== null) {
+							pokeAPI.getGymeLevel(gym, function(gym_level_err, gym_level) {
+								if(gym_level_err) {
+									myLog.error(gym_level_err);
+									setTimeout(function() {
+										getGyms(options, callback);
+									}, call_wait);
+								} else {
+									if(gym_details.memberships < gym_level) {
+										getPokemonToDeploy(function(pokemon) {
+											myLog.chat("=== DEPLOYING TO GYM ===");
+											pokeAPI.FortDeployPokemon(gym, pokemon.id, function(err, res) {
+												if(err) {
+													myLog.error(err);
+												} else {
+													if(res !== undefined && res.result !== undefined) {
+														if(res.result == 1) {
+															myLog.success("Deployed " + pokemon.info.name + " pokemon to gym");
+															pokeAPI.CollectDailyDefenderBonus(function(err, res) {
+																if(err) {
+																	myLog.error(err);
+																} else {
+																	if(res !== undefined && res.result !== undefined) {
+																		if(res.result == 1) {
+																			myLog.success("Collection successful");
+																			if(res.currency_awarded.length > 0) {
+																				for(var j in res.currency_awarded) {
+																					myLog.success("\t" + res.currency_awarded[j] + " " + pokeAPI.formatString(res.currency_type[j]) + " awarded");
+																					deploy_collect = false;
+																				}
+																			}
+																		} else {
+																			myLog.info("Unable to collect: " + pokeAPI.getCollectDailyDefenderBonusResult(res.result));
+																		}
+																	} else {
+																		myLog.warning(JSON.stringify(res));
+																	}
+																}
+															});
+														} else {
+															myLog.warning("Unable to deploy to gym: " + pokeAPI.getFortDeployPokemonResult(res.result));
+														}
+													} else {
+														myLog.warning(JSON.stringify(res));
 													}
 												}
-											} else {
-												myLog.info("Unable to collect: " + pokeAPI.getCollectDailyDefenderBonusResult(res.result));
-											}
-										} else {
-											myLog.warning(JSON.stringify(res));
-										}
+												setTimeout(function() {
+													getGyms(options, callback);
+												}, call_wait);
+											});
+										});
+									} else {
+										myLog.warning("=== NOT DEPLOYING TO GYM - NO ROOM ===");
+										setTimeout(function() {
+											getGyms(options, callback);
+										}, call_wait);
 									}
-								});
-							} else {
-								myLog.warning("Unable to deploy to gym: " + pokeAPI.getFortDeployPokemonResult(res.result));
-							}
+								}
+							});
 						} else {
-							myLog.warning(JSON.stringify(res));
+							myLog.warning("gym_details.memberships is undefined or null");
+							setTimeout(function() {
+								getGyms(options, callback);
+							}, call_wait);
 						}
 					}
-					setTimeout(function() {
-						getGyms(options, callback);
-					}, call_wait);
 				});
-			});
+			}
+		} else {
+			callback(true);
 		}
 	} else {
 		callback(true);
