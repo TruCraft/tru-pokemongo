@@ -1621,6 +1621,9 @@ function getPokeStops(options, callback) {
 			});
 		} else {
 			myLog.chat("=== NOT APPROACHING POKESTOP" + (lure ? " WITH LURE" : "") + " - COOLING DOWN ===");
+			setTimeout(function() {
+				getPokeStops(options, callback);
+			}, call_wait);
 		}
 	} else {
 		callback(options.xp_earned);
