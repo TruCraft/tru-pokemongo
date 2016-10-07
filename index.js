@@ -1249,7 +1249,9 @@ function trashItems(items, callback) {
 					myLog.warning(JSON.stringify(dat));
 				}
 			}
-			trashItems(items, callback);
+			setTimeout(function() {
+				trashItems(items, callback);
+			}, call_wait);
 		});
 	} else {
 		callback(true);
