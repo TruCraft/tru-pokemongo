@@ -306,6 +306,8 @@ function init() {
 								});
 							} else {
 								myLog.error("No forts found in path");
+								doLoop = false;
+								main();
 							}
 						});
 					} else {
