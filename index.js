@@ -1497,8 +1497,8 @@ function getGyms(options, callback) {
 			var gym = options.gyms.pop();
 			if(gym.owned_by_team == 0 || gym.owned_by_team == player_profile.team) {
 				pokeAPI.getGymDetails(gym, function(gym_details_err, gym_details) {
-					if(gym_level_err) {
-						myLog.error(gym_level_err);
+					if(gym_details_err) {
+						myLog.error(gym_details_err);
 						setTimeout(function() {
 							getGyms(options, callback);
 						}, call_wait);
