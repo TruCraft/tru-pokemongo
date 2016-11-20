@@ -251,6 +251,8 @@ var max_walk_dist = 20;
 
 var fail_count = 0;
 
+var award_num = 0;
+
 var current_location = -1;
 var locations = [];
 var forts_in_path = [];
@@ -648,9 +650,18 @@ function processHeartBeatResponses(res, callback) {
 									}
 								});
 							}
-							myLog.success("\t" + sumArray(result.experience_awarded) + " XP awarded");
-							myLog.success("\t" + sumArray(result.candy_awarded) + " Candy awarded");
-							myLog.success("\t" + sumArray(result.stardust_awarded) + " Stardust awarded");
+							award_num = sumArray(result.experience_awarded);
+							if(award_num > 0) {
+								myLog.success("\t" + award_num + " XP awarded");
+							}
+							award_num = sumArray(result.candy_awarded);
+							if(award_num > 0) {
+								myLog.success("\t" + award_num + " Candy awarded");
+							}
+							award_num = sumArray(result.stardust_awarded);
+							if(award_num > 0) {
+								myLog.success("\t" + award_num + " Stardust awarded");
+							}
 						});
 					}
 				}
@@ -1061,9 +1072,18 @@ function catchPokemon(pokemon, pokemon_data, encounter_res, callback) {
 							}
 						}
 						if(catch_res.capture_award !== undefined && catch_res.capture_award != null) {
-							myLog.success("\t" + sumArray(catch_res.capture_award.xp) + " XP awarded");
-							myLog.success("\t" + sumArray(catch_res.capture_award.candy) + " Candy awarded");
-							myLog.success("\t" + sumArray(catch_res.capture_award.stardust) + " Stardust awarded");
+							award_num = sumArray(catch_res.capture_award.xp);
+							if(award_num > 0) {
+								myLog.success("\t" + award_num + " XP awarded");
+							}
+							award_num = sumArray(catch_res.capture_award.candy);
+							if(award_num > 0) {
+								myLog.success("\t" + award_num + " Candy awarded");
+							}
+							award_num = sumArray(catch_res.capture_award.stardust);
+							if(award_num > 0) {
+								myLog.success("\t" + award_num + " Stardust awarded");
+							}
 						}
 					} else {
 						myLog.warning("Unable to catch " + pokemon_name + "; status not defined (" + catch_res + ")");
