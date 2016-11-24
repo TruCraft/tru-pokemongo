@@ -577,6 +577,8 @@ function runLocationChecks(wait) {
 											stop_process = true;
 											myLog.error("There has been nothing nearby " + nothing_nearby_count + " times; something might be wrong (probably captcha)");
 										}
+									} else {
+										nothing_nearby_count = 0;
 									}
 
 									checkForts(forts, function(options) {
