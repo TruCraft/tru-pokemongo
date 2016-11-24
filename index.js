@@ -545,6 +545,7 @@ function runLocationChecks(wait) {
 								if(cells.length > 0) {
 									var forts = [];
 									var pokemon_to_catch = [];
+									var nearby_count = 0;
 									for(var cell_i in cells) {
 										var cell = cells[cell_i];
 										if(cell.forts.length > 0) {
@@ -553,14 +554,8 @@ function runLocationChecks(wait) {
 
 										if(cell.nearby_pokemons.length > 0) {
 											for(var near_i in cell.nearby_pokemons) {
+												nearby_count++;
 												myLog.warning("There is a " + pokeAPI.getPokemonInfo(cell.nearby_pokemons[near_i]).name + " near.");
-											}
-										} else {
-											nothing_nearby_count++;
-											myLog.warning("There is nothing nearby");
-											if(nothing_nearby_count >= nothing_nearby_max) {
-												stop_process = true;
-												myLog.error("There has been nothing nearby " + nothing_nearby_count + " times; something might be wrong (probably captcha)");
 											}
 										}
 
@@ -572,6 +567,15 @@ function runLocationChecks(wait) {
 													pokemon_to_catch.push(cell.catchable_pokemons[catch_i]);
 												}
 											}
+										}
+									}
+
+									if(nearby_count == 0) {
+										nothing_nearby_count++;
+										myLog.warning("There is nothing nearby");
+										if(nothing_nearby_count >= nothing_nearby_max) {
+											stop_process = true;
+											myLog.error("There has been nothing nearby " + nothing_nearby_count + " times; something might be wrong (probably captcha)");
 										}
 									}
 
