@@ -95,14 +95,14 @@ function showUsage(msg) {
 
 var flags = commandLineArgs(optionDefinitions[1].optionList);
 
-var doLoop = !flags.loop || true;
-var doCatch = !flags.catch || true;
+var doLoop = !flags.loop;
+var doCatch = !flags.catch;
 var doDeploy = flags.deploy || false;
-var doScrap = !flags.scrap || true;
-var doTrash = !flags.trash || true;
-var doShowInventory = !flags.inventory || true;
-var doShowPokemon = !flags.pokemon || true;
-var doWriteInventory = !flags.write || true;
+var doScrap = !flags.scrap;
+var doTrash = !flags.trash;
+var doShowInventory = !flags.inventory;
+var doShowPokemon = !flags.pokemon;
+var doWriteInventory = !flags.write;
 
 var username = flags.username;
 var coords_filename = flags.file;
@@ -201,8 +201,8 @@ var allow_scrap = account_config.allow_scrap || false;
 var trash_items = account_config.trash_items || null;
 
 var interval_obj;
-var interval_min = 10000;
-var interval_max = 20000;
+var interval_min = 15000;
+var interval_max = 25000;
 var interval;
 
 var retry_wait = 10000;
@@ -212,6 +212,9 @@ var min_catch_probability = 30;
 
 var poke_storage = 0;
 var item_storage = 0;
+
+var nothing_nearby_count = 0;
+var nothing_nearby_max = 15;
 
 var pokeball_counts = [];
 var inventory_items = [];
@@ -241,8 +244,8 @@ var restart_wait_max = 90; // in minutes
 var fail_count_restart = 0;
 
 var breaktime = null;
-var loop_time_min = 30; // in minutes
-var loop_time_max = 90; // in minutes
+var loop_time_min = 60; // in minutes
+var loop_time_max = 120; // in minutes
 
 var perfect_score = (15 + 15 + 15);
 
@@ -552,6 +555,13 @@ function runLocationChecks(wait) {
 											for(var near_i in cell.nearby_pokemons) {
 												myLog.warning("There is a " + pokeAPI.getPokemonInfo(cell.nearby_pokemons[near_i]).name + " near.");
 											}
+										} else {
+											nothing_nearby_count++;
+											myLog.warning("There is nothing nearby");
+											if(nothing_nearby_count >= nothing_nearby_max) {
+												stop_process = true;
+												myLog.error("There has been nothing nearby " + nothing_nearby_count + " times; something might be wrong (probably captcha)");
+											}
 										}
 
 										// get list of catchable pokemon
@@ -586,12 +596,14 @@ function runLocationChecks(wait) {
 												stats: stats,
 												trash: doTrash
 											}, function() {
-												myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
-												catchPokemonList({pokemon_list: pokemon_to_catch}, function() {
-													addPokemonToFavorites(function() {
-														// maybe do something
-													});
-												});
+												// maybe do something
+											});
+										});
+
+										myLog.info(pokemon_to_catch.length + " catchable pokemon nearby");
+										catchPokemonList({pokemon_list: pokemon_to_catch}, function() {
+											addPokemonToFavorites(function() {
+												// maybe do something
 											});
 										});
 									});
